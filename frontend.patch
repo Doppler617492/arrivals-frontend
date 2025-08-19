@@ -1,0 +1,436 @@
+*** Begin Patch
+*** Update File: src/lib/api.ts
+@@
+-export type Arrival = {
+-  id: number;
+-  type: 'truck' | 'container' | 'rail' | string;
+-  plate: string | null;
+-  supplier: string | null;
+-  status: 'announced' | 'arrived' | 'delayed' | string;
+-  eta: string | null;
+-  note: string | null;
+-  carrier: string | null;
+-  created_at: string;
+-};
+-
+-const BASE = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:5000';
+-
+-export async function fetchArrivals(): Promise<Arrival[]> {
+-  const res = await fetch(`${BASE}/api/arrivals`, { credentials: 'omit' });
+-  if (!res.ok) throw new Error(`GET /api/arrivals failed: ${res.status}`);
+-  return res.json();
+-}
+-
+-// add more helpers as needed (create, patch, etc.)
+-export const api = { fetchArrivals };
++export type Arrival = {
++  id: number;
++  type: 'truck' | 'container' | 'rail' | string;
++  plate: string | null;
++  supplier: string | null;
++  status: 'announced' | 'arrived' | 'delayed' | string;
++  eta: string | null;
++  note: string | null;
++  carrier: string | null;
++  created_at: string;
++};
++
++const BASE = (import.meta as any).env?.VITE_BACKEND_URL ?? 'http://localhost:5000';
++
++async function json<T = unknown>(res: Response): Promise<T> {
++  if (!res.ok) {
++    const text = await res.text().catch(() => '');
++    throw new Error(`${res.status} ${res.statusText} ${text}`.trim());
++  }
++  return res.json() as Promise<T>;
++}
++
++export async function fetchArrivals(): Promise<Arrival[]> {
++  const res = await fetch(`${BASE}/api/arrivals`, { method: 'GET' });
++  return json<Arrival[]>(res);
++}
++
++export async function createArrival(payload: Partial<Arrival>): Promise<Arrival> {
++  const res = await fetch(`${BASE}/api/arrivals`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify(payload),
++  });
++  return json<Arrival>(res);
++}
++
++export async function updateStatus(id: number, status: Arrival['status']): Promise<Arrival> {
++  const res = await fetch(`${BASE}/api/arrivals/${id}`, {
++    method: 'PATCH',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify({ status }),
++  });
++  return json<Arrival>(res);
++}
++
++export async function bulkUpdate(ids: number[], status: Arrival['status']): Promise<Arrival[]> {
++  const results: Arrival[] = [];
++  for (const id of ids) {
++    results.push(await updateStatus(id, status));
++  }
++  return results;
++}
++
++export const api = { fetchArrivals, createArrival, updateStatus, bulkUpdate };
+*** End Patch
+
+*** Begin Patch
+*** Add File: src/lib/export.ts
++import type { Arrival } from './api';
++
++export function exportCSV(rows: Arrival[], filename = 'arrivals.csv') {
++  const headers = ['id','supplier','plate','status','type','created_at'];
++  const body = rows.map(r => [
++    r.id,
++    r.supplier ?? '',
++    r.plate ?? '',
++    r.status,
++    r.type,
++    r.created_at,
++  ]);
++  const csv = [headers, ...body].map(r => r.map(cell =>
++    String(cell).includes(',') ? `"${String(cell).replace(/"/g,'""')}"` : String(cell)
++  ).join(',')).join('\n');
++
++  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
++  const url = URL.createObjectURL(blob);
++  const a = document.createElement('a');
++  a.href = url;
++  a.download = filename;
++  a.click();
++  URL.revokeObjectURL(url);
++}
++
++export async function exportPDF(rows: Arrival[], filename = 'arrivals.pdf') {
++  const { default: jsPDF } = await import('jspdf');
++  const autoTable = (await import('jspdf-autotable')).default;
++
++  const doc = new jsPDF();
++  doc.text('Arrivals', 14, 16);
++  autoTable(doc, {
++    startY: 22,
++    head: [['#','Supplier','Plate','Status','Type','Created']],
++    body: rows.map(r => [
++      r.id,
++      r.supplier ?? '',
++      r.plate ?? '',
++      r.status,
++      r.type,
++      r.created_at,
++    ]),
++    styles: { fontSize: 9 },
++    headStyles: { fillColor: undefined }, // default color
++  });
++  doc.save(filename);
++}
+*** End Patch
+
+*** Begin Patch
+*** Add File: src/lib/notify.ts
++export async function requestNotif(): Promise<boolean> {
++  if (typeof window === 'undefined' || !('Notification' in window)) return false;
++  if (Notification.permission === 'granted') return true;
++  if (Notification.permission === 'denied') return false;
++  try {
++    const perm = await Notification.requestPermission();
++    return perm === 'granted';
++  } catch {
++    return false;
++  }
++}
+*** End Patch
+
+*** Begin Patch
+*** Add File: src/lib/toast.tsx
++import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
++
++type ToastVariant = 'default' | 'success' | 'error' | 'warning';
++export type Toast = { id: number; title: string; description?: string; variant?: ToastVariant; };
++
++type Ctx = { pushToast: (t: Omit<Toast,'id'>) => void; remove: (id:number)=>void };
++const ToastCtx = createContext<Ctx | null>(null);
++
++export function ToastProvider({ children }: { children: React.ReactNode }) {
++  const [toasts, setToasts] = useState<Toast[]>([]);
++  const remove = useCallback((id: number) => setToasts(t => t.filter(x => x.id !== id)), []);
++  const pushToast = useCallback((t: Omit<Toast,'id'>) => {
++    const id = Date.now() + Math.random();
++    setToasts(prev => [...prev, { id, ...t }]);
++    setTimeout(() => remove(id), 4000);
++  }, [remove]);
++  const value = useMemo(() => ({ pushToast, remove }), [pushToast, remove]);
++  return (
++    <ToastCtx.Provider value={value}>
++      {children}
++      <div style={{
++        position:'fixed', top:12, right:12, display:'flex', flexDirection:'column', gap:8, zIndex:9999
++      }}>
++        {toasts.map(t => (
++          <div key={t.id}
++               style={{
++                 minWidth:260, maxWidth:360, padding:'10px 12px', borderRadius:10,
++                 boxShadow:'0 8px 24px rgba(0,0,0,0.12)',
++                 background: t.variant==='error' ? '#ffe8e8'
++                           : t.variant==='success' ? '#e8fff1'
++                           : t.variant==='warning' ? '#fff8e1'
++                           : '#fff',
++                 border:'1px solid rgba(0,0,0,0.08)'
++               }}>
++            <div style={{ fontWeight:600, marginBottom:4 }}>{t.title}</div>
++            {t.description && <div style={{ opacity:0.8, fontSize:13 }}>{t.description}</div>}
++          </div>
++        ))}
++      </div>
++    </ToastCtx.Provider>
++  );
++}
++
++export function useToast() {
++  const ctx = useContext(ToastCtx);
++  if (!ctx) throw new Error('useToast must be used within <ToastProvider>');
++  return ctx;
++}
+*** End Patch
+
+*** Begin Patch
+*** Add File: src/components/Stat.tsx
++import React from 'react';
++
++export function Stat({ label, value }: { label: string; value: number | string }) {
++  return (
++    <div style={{
++      padding:'12px 16px', border:'1px solid rgba(0,0,0,0.08)',
++      borderRadius:12, background:'#fff', boxShadow:'0 2px 8px rgba(0,0,0,0.04)'
++    }}>
++      <div style={{ fontSize:12, opacity:0.7 }}>{label}</div>
++      <div style={{ fontSize:22, fontWeight:700 }}>{value}</div>
++    </div>
++  );
++}
+*** End Patch
+
+*** Begin Patch
+*** Update File: src/components/KpiBar.tsx
+@@
+-import { Arrival } from '../lib/api';
++import type { Arrival } from '../lib/api';
++import { Stat } from './Stat';
++import React from 'react';
++
++export default function KpiBar({ data }: { data: Arrival[] }) {
++  const total = data.length;
++  const byStatus = (s: string) => data.filter(a => a.status === s).length;
++  return (
++    <div style={{ display:'grid', gridTemplateColumns:'repeat(4, minmax(0, 1fr))', gap:12, margin:'12px 0' }}>
++      <Stat label="Total" value={total} />
++      <Stat label="Announced" value={byStatus('announced')} />
++      <Stat label="Arrived" value={byStatus('arrived')} />
++      <Stat label="Delayed" value={byStatus('delayed')} />
++    </div>
++  );
++}
+*** End Patch
+
+*** Begin Patch
+*** Update File: src/components/ArrivalsTable.tsx
+@@
+-import { api, Arrival } from '../lib/api';
++import { api } from '../lib/api';
++import type { Arrival } from '../lib/api';
++import React, { useState } from 'react';
++import { useToast } from '../lib/toast';
++
++export default function ArrivalsTable({ rows, onRefresh }: { rows: Arrival[]; onRefresh: () => void }) {
++  const [busy, setBusy] = useState<number | null>(null);
++  const { pushToast } = useToast();
++  const update = async (id: number, status: Arrival['status']) => {
++    try {
++      setBusy(id);
++      await api.updateStatus(id, status);
++      pushToast({ title: 'Status updated', description: `#${id} → ${status}`, variant:'success' });
++      onRefresh();
++    } catch (e) {
++      pushToast({ title: 'Failed to update', description: e instanceof Error ? e.message : String(e), variant:'error' });
++    } finally {
++      setBusy(null);
++    }
++  };
++
++  return (
++    <div style={{ overflowX:'auto' }}>
++      <table style={{ width:'100%', borderCollapse:'collapse' }}>
++        <thead>
++          <tr style={{ textAlign:'left', borderBottom:'1px solid rgba(0,0,0,0.1)' }}>
++            <th style={{ padding:'8px 6px' }}>#</th>
++            <th style={{ padding:'8px 6px' }}>Supplier</th>
++            <th style={{ padding:'8px 6px' }}>Plate</th>
++            <th style={{ padding:'8px 6px' }}>Status</th>
++            <th style={{ padding:'8px 6px' }}>Type</th>
++            <th style={{ padding:'8px 6px' }}>Created</th>
++            <th style={{ padding:'8px 6px' }}></th>
++          </tr>
++        </thead>
++        <tbody>
++          {rows.map(r => (
++            <tr key={r.id} style={{ borderBottom:'1px solid rgba(0,0,0,0.06)' }}>
++              <td style={{ padding:'8px 6px' }}>{r.id}</td>
++              <td style={{ padding:'8px 6px' }}>{r.supplier ?? '-'}</td>
++              <td style={{ padding:'8px 6px' }}>{r.plate ?? '-'}</td>
++              <td style={{ padding:'8px 6px', fontWeight:600 }}>{r.status}</td>
++              <td style={{ padding:'8px 6px' }}>{r.type}</td>
++              <td style={{ padding:'8px 6px', whiteSpace:'nowrap' }}>{new Date(r.created_at).toLocaleString()}</td>
++              <td style={{ padding:'8px 6px' }}>
++                <div style={{ display:'flex', gap:8 }}>
++                  <button disabled={busy===r.id} onClick={() => update(r.id, 'announced')}>Announce</button>
++                  <button disabled={busy===r.id} onClick={() => update(r.id, 'arrived')}>Arrive</button>
++                  <button disabled={busy===r.id} onClick={() => update(r.id, 'delayed')}>Delay</button>
++                </div>
++              </td>
++            </tr>
++          ))}
++        </tbody>
++      </table>
++    </div>
++  );
++}
+*** End Patch
+
+*** Begin Patch
+*** Update File: src/App.tsx
+@@
+-import { useEffect, useState } from 'react';
+-import { api } from './lib/api';
+-import type { Arrival } from './lib/api';
+-
+-export default function App() {
+-  const [data, setData] = useState<Arrival[] | null>(null);
+-  const [err, setErr] = useState<string | null>(null);
+-  const [loading, setLoading] = useState(true);
+-
+-  useEffect(() => {
+-    api.fetchArrivals()
+-      .then(setData)
+-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
+-      .finally(() => setLoading(false));
+-  }, []);
+-
+-  if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
+-  if (err) return <div style={{ padding: 24, color: 'crimson' }}>
+-    Failed to load: {err}
+-  </div>;
+-
+-  if (!data || data.length === 0) {
+-    return <div style={{ padding: 24 }}>No arrivals yet.</div>;
+-  }
+-
+-  return (
+-    <div style={{ padding: 24 }}>
+-      <h1>Arrivals</h1>
+-      <ul>
+-        {data.map(a => (
+-          <li key={a.id}>
+-            #{a.id} • {a.supplier ?? 'Unknown'} • {a.status} • {a.plate ?? '-'}
+-          </li>
+-        ))}
+-      </ul>
+-    </div>
+-  );
+-}
++import { useCallback, useEffect, useMemo, useState } from 'react';
++import { api } from './lib/api';
++import type { Arrival } from './lib/api';
++import { useToast } from './lib/toast';
++import { exportCSV, exportPDF } from './lib/export';
++import { requestNotif } from './lib/notify';
++import ArrivalsTable from './components/ArrivalsTable';
++import KpiBar from './components/KpiBar';
++
++export default function App() {
++  const [data, setData] = useState<Arrival[] | null>(null);
++  const [err, setErr] = useState<string | null>(null);
++  const [loading, setLoading] = useState(true);
++  const { pushToast } = useToast();
++
++  const load = useCallback(() => {
++    setLoading(true);
++    setErr(null);
++    api.fetchArrivals()
++      .then(setData)
++      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
++      .finally(() => setLoading(false));
++  }, []);
++
++  useEffect(() => { load(); }, [load]);
++
++  const rows = useMemo(() => data ?? [], [data]);
++
++  if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
++  if (err) return <div style={{ padding: 24, color: 'crimson' }}>
++    Failed to load: {err}
++  </div>;
++
++  const doExportCSV = () => {
++    exportCSV(rows);
++    pushToast({ title: 'Exported CSV', variant: 'success' });
++  };
++  const doExportPDF = async () => {
++    await exportPDF(rows);
++    pushToast({ title: 'Exported PDF', variant: 'success' });
++  };
++  const doNotif = async () => {
++    const ok = await requestNotif();
++    pushToast({
++      title: ok ? 'Notifications enabled' : 'Notifications not granted',
++      variant: ok ? 'success' : 'warning'
++    });
++  };
++
++  return (
++    <div style={{ padding: 24, maxWidth: 1100, margin: '0 auto' }}>
++      <h1 style={{ marginBottom: 6 }}>Arrivals</h1>
++      <div style={{ display:'flex', gap:8, marginBottom: 8 }}>
++        <button onClick={load}>Refresh</button>
++        <button onClick={doNotif}>Enable notifications</button>
++        <button onClick={doExportCSV}>Export CSV</button>
++        <button onClick={doExportPDF}>Export PDF</button>
++      </div>
++      {rows.length === 0 ? (
++        <div>No arrivals yet.</div>
++      ) : (
++        <>
++          <KpiBar data={rows} />
++          <ArrivalsTable rows={rows} onRefresh={load} />
++        </>
++      )}
++    </div>
++  );
++}
+*** End Patch
+
+*** Begin Patch
+*** Update File: src/main.tsx
+@@
+-import React from 'react'
+-import ReactDOM from 'react-dom/client'
+-import App from './App.tsx'
+-import './index.css'
++import React from 'react';
++import ReactDOM from 'react-dom/client';
++import App from './App.tsx';
++import './index.css';
++import { ToastProvider } from './lib/toast';
+ 
+ ReactDOM.createRoot(document.getElementById('root')!).render(
+   <React.StrictMode>
+-    <App />
++    <ToastProvider>
++      <App />
++    </ToastProvider>
+   </React.StrictMode>,
+ )
+*** End Patch
