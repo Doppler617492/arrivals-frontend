@@ -1,0 +1,139 @@
+/* ========= Base / font ========= */
+:root {
+  --bg: #f6f7fb;
+  --bg-elev: #ffffff;
+  --panel: #ffffff;
+  --muted: #64748b;
+  --muted-2: #475569;
+  --fg: #0f172a;
+  --fg-strong: #0b1220;
+
+  --card: #ffffff;
+  --card-ring: rgba(2, 6, 23, 0.06);
+  --card-hover: rgba(2, 6, 23, 0.04);
+
+  --accent: #0ea5e9;
+  --accent-600: #0284c7;
+  --accent-soft: rgba(14,165,233,.14);
+
+  --ok: #10b981;      --ok-soft: rgba(16,185,129,.14);
+  --warn: #f59e0b;    --warn-soft: rgba(245,158,11,.16);
+  --info: #38bdf8;    --info-soft: rgba(56,189,248,.16);
+  --danger: #f43f5e;  --danger-soft: rgba(244,63,94,.16);
+
+  --ring: rgba(2,6,23,.08);
+  --hair: rgba(2,6,23,.10);
+  --shadow: 0 1px 2px rgba(2,6,23,.06), 0 10px 30px rgba(2,6,23,.08);
+  --radius: 12px;
+}
+
+.dark {
+  --bg: #0b1220;
+  --bg-elev: #0f172a;
+  --panel: #0b1220;
+  --muted: #9aa4b2;
+  --muted-2: #cbd5e1;
+  --fg: #e2e8f0;
+  --fg-strong: #f8fafc;
+
+  --card: #0f172a;
+  --card-ring: rgba(100,116,139,.25);
+  --card-hover: rgba(148,163,184,.08);
+
+  --ring: rgba(148,163,184,.20);
+  --hair: rgba(148,163,184,.16);
+  --shadow: 0 6px 24px rgba(0,0,0,.35);
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji";
+}
+
+/* ========= Layout ========= */
+.app-shell {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 100%;
+}
+.sidebar {
+  background: linear-gradient(180deg, var(--bg) 0%, var(--bg-elev) 100%);
+  border-right: 1px solid var(--hair);
+  padding: 16px 12px;
+}
+.sidebar .title {
+  font-weight: 700; color: var(--fg-strong);
+  padding: 10px 12px; border-radius: 10px;
+  background: linear-gradient(180deg, var(--accent-soft), rgba(2,132,199,.05));
+  border: 1px solid rgba(2,132,199,.25);
+}
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(255,255,255,.75));
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--hair);
+}
+.container {
+  max-width: 1200px; margin: 0 auto; padding: 20px;
+}
+
+/* ========= Cards & buttons ========= */
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-ring);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.card-header { padding: 14px 18px; border-bottom: 1px solid var(--hair); font-weight: 600; }
+.card-body { padding: 16px 18px; }
+
+.kpi-grid { display: grid; gap: 12px; grid-template-columns: repeat(4,minmax(0,1fr)); }
+.kpi { background: linear-gradient(180deg, rgba(148,163,184,.10), rgba(148,163,184,.05));
+       border:1px solid var(--card-ring); border-radius: var(--radius); padding:16px; }
+.kpi .label { font-size: 12px; color: var(--muted); }
+.kpi .value { font-size: 28px; font-weight: 700; }
+
+.btn {
+  display:inline-flex; align-items:center; gap:8px;
+  border:0; background: linear-gradient(180deg, var(--accent), var(--accent-600));
+  color:#fff; padding:11px 16px; border-radius: 10px; font-weight:600;
+  box-shadow: var(--shadow); cursor:pointer;
+  transition: transform .06s ease, filter .15s ease;
+}
+.btn:hover { filter: brightness(1.05); }
+.btn:active { transform: translateY(1px); }
+.btn-outline {
+  display:inline-flex; align-items:center; gap:8px;
+  background: transparent; color: var(--fg); padding:10px 15px;
+  border-radius: 10px; border:1px solid var(--ring);
+}
+.icon-btn { padding:8px 10px; border-radius:10px; border:1px solid var(--ring); background:#fff; }
+
+/* Inputs */
+.input, .select {
+  width: 100%; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--ring); background: var(--panel); color: var(--fg);
+}
+.label { font-size: 12px; color: var(--muted); margin-bottom: 6px; display:block; }
+
+/* ========= Table ========= */
+.table-wrap { border:1px solid var(--hair); border-radius: var(--radius); overflow: hidden; }
+table.modern { width: 100%; border-collapse: collapse; }
+table.modern thead th {
+  text-align:left; font-size:12px; letter-spacing:.3px; color:var(--muted);
+  background: linear-gradient(180deg, rgba(148,163,184,.10), rgba(148,163,184,.05));
+  padding: 12px 14px; border-bottom:1px solid var(--hair);
+}
+table.modern tbody td { padding: 12px 14px; border-bottom:1px solid var(--hair); }
+table.modern tbody tr:hover { background: var(--card-hover); }
+
+/* Badges */
+.badge { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; font-size:12px; border:1px solid transparent; }
+.badge.announced { color:var(--warn); background:var(--warn-soft); border-color: rgba(245,158,11,.35); }
+.badge.arrived   { color:var(--ok);   background:var(--ok-soft);   border-color: rgba(16,185,129,.35); }
+.badge.unloaded  { color:var(--info); background:var(--info-soft); border-color: rgba(56,189,248,.35); }
+.badge.delayed   { color:var(--danger); background:var(--danger-soft); border-color: rgba(244,63,94,.35); }
