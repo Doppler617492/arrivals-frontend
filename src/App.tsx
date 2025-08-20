@@ -1,6 +1,8 @@
 // src/App.tsx
 
 import React, { useEffect, useMemo, useState } from "react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 type FileMeta = { id: number; filename: string; url: string; uploaded_at: string; size?: number };
 type ArrivalSearchResponse = { items: Arrival[]; total: number; page: number; per_page: number };
@@ -141,13 +143,18 @@ async function apiDELETE<T>(path: string, auth = false): Promise<T> {
   });
   if (!res.ok) {
     if (res.status === 401 || res.status === 422) {
-      // JWT expired/invalid – force logout by clearing token
       localStorage.removeItem("token");
     }
     const text = await res.text();
     throw new Error(`${res.status} ${res.statusText} - ${text}`);
   }
-  return res.json();
+  const ct = res.headers.get("content-type") || "";
+  if (res.status === 204 || !ct.includes("application/json")) {
+    // Some backends return no content on DELETE – synthesize a success payload.
+    return { ok: true } as any;
+  }
+  const text = await res.text();
+  return (text ? JSON.parse(text) : ({ ok: true } as any)) as T;
 }
 
 // Dozvole po ulozi – mora da se poklopi sa backend ROLE_FIELDS
@@ -170,6 +177,126 @@ const STATUSES: Arrival["status"][] = [
   "delayed",
   "cancelled",
 ];
+
+// small helper to colorize status labels
+function getStatusChipStyle(s: Arrival['status']): React.CSSProperties {
+  const base: React.CSSProperties = {
+    display: 'inline-block',
+    padding: '4px 8px',
+    borderRadius: 999,
+    border: '1px solid rgba(255,255,255,0.15)',
+    background: 'rgba(255,255,255,0.06)',
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  };
+  const map: Record<Arrival['status'], React.CSSProperties> = {
+    announced:   { background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)' },
+    working:     { background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.35)' },
+    producing:   { background: 'rgba(20,184,166,0.15)', border: '1px solid rgba(20,184,166,0.35)' },
+    shipped:     { background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)' },
+    arriving:    { background: 'rgba(234,179,8,0.15)',  border: '1px solid rgba(234,179,8,0.35)'  },
+    arrived:     { background: 'rgba(34,197,94,0.15)',  border: '1px solid rgba(34,197,94,0.35)'  },
+    delayed:     { background: 'rgba(244,63,94,0.15)',  border: '1px solid rgba(244,63,94,0.35)'  },
+    cancelled:   { background: 'rgba(148,163,184,0.15)',border: '1px solid rgba(148,163,184,0.35)'}
+  } as const;
+  return { ...base, ...(map[s] || {}) };
+}
+
+// ——— Export helpers ——————————————————————————————————————————————————————
+function formatArrivalRows(items: Arrival[]) {
+  return items.map((a) => ({
+    ID: a.id,
+    Dobavljac: a.supplier,
+    Prevoznik: a.carrier || "-",
+    Tablice: a.plate || "-",
+    Tip: a.type,
+    ETA: a.eta ? new Date(a.eta).toLocaleString() : "-",
+    Status: a.status,
+    Napomena: a.note || "-",
+    Kreirano: new Date(a.created_at).toLocaleString(),
+  }));
+}
+
+function downloadBlob(filename: string, mime: string, data: string | Blob) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportArrivalsCSV(items: Arrival[]) {
+  const rows = formatArrivalRows(items);
+  const headers = Object.keys(rows[0] || {
+    ID: "",
+    Dobavljac: "",
+    Prevoznik: "",
+    Tablice: "",
+    Tip: "",
+    ETA: "",
+    Status: "",
+    Napomena: "",
+    Kreirano: "",
+  });
+  const escape = (v: any) => {
+    const s = String(v ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [headers.join(",")]
+    .concat(rows.map((r) => headers.map((h) => escape((r as any)[h])).join(",")))
+    .join("\n");
+  // Prepend BOM so Excel properly detects UTF-8 (ćčđšž)
+  downloadBlob(`arrivals_${new Date().toISOString().slice(0,10)}.csv`, "text/csv;charset=utf-8", "\uFEFF" + csv);
+}
+
+async function exportArrivalsXLSX(items: Arrival[]) {
+  try {
+    const XLSX = await import(/* @vite-ignore */ "xlsx");
+    const rows = formatArrivalRows(items);
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Arrivals");
+    XLSX.writeFile(wb, `arrivals_${new Date().toISOString().slice(0,10)}.xlsx`);
+  } catch (err) {
+    // Fallback to CSV if xlsx lib is not installed
+    console.warn("xlsx not available, falling back to CSV", err);
+    exportArrivalsCSV(items);
+  }
+}
+
+function exportArrivalsPDF(items: Arrival[]) {
+  const doc = new jsPDF({ orientation: "landscape" });
+  const rows = formatArrivalRows(items);
+  const head = [
+    ["ID", "Dobavljač", "Prevoznik", "Tablice", "Tip", "ETA", "Status", "Napomena", "Kreirano"],
+  ];
+  const body = rows.map((r) => [
+    r.ID,
+    r.Dobavljac,
+    r.Prevoznik,
+    r.Tablice,
+    r.Tip,
+    r.ETA,
+    r.Status,
+    r.Napomena,
+    r.Kreirano,
+  ]);
+  doc.setFontSize(14);
+  doc.text("Dolasci — Izvoz", 14, 14);
+  autoTable(doc, {
+    head,
+    body,
+    startY: 18,
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: [63, 90, 224] },
+  });
+  doc.save(`arrivals_${new Date().toISOString().slice(0,10)}.pdf`);
+}
 
 // ——— Login view ————————————————————————————————————————————————————————
 function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
@@ -335,8 +462,8 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [perPage, setPerPage] = useState(10);
   const [total, setTotal] = useState(0);
 
-  // toggle users view
-  const [showUsers, setShowUsers] = useState(false);
+  // tabs: arrivals (default), users (admin only), and updates (feed)
+  const [tab, setTab] = useState<'arrivals' | 'users' | 'updates'>('arrivals');
 
   // modal – novi dolazak
   const [openCreate, setOpenCreate] = useState(false);
@@ -359,10 +486,55 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [openFiles, setOpenFiles] = useState<null | number>(null);
   const [files, setFiles] = useState<FileMeta[]>([]);
 
+  // global updates feed (Aktivnosti tab)
+  const [feed, setFeed] = useState<Update[]>([]);
+  const [feedLoading, setFeedLoading] = useState(false);
+  const [feedErr, setFeedErr] = useState<string | null>(null);
+
   // deleting state for arrivals
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
   const may = useMemo(() => ROLE_FIELDS[user.role] || new Set<string>(), [user.role]);
+
+  const kpis = useMemo(() => {
+    const total = items.length;
+    const delayed = items.filter(i => i.status === 'delayed').length;
+    const arriving = items.filter(i => i.status === 'arriving' || i.status === 'shipped').length;
+    const arrived = items.filter(i => i.status === 'arrived').length;
+    return { total, delayed, arriving, arrived };
+  }, [items]);
+  useEffect(() => {
+    const loadFeed = async () => {
+      setFeedLoading(true);
+      setFeedErr(null);
+      try {
+        // try a dedicated endpoint first
+        try {
+          const rows = await apiGET<Update[]>('/api/updates', true);
+          setFeed(rows);
+        } catch {
+          // fallback: gather from each arrival
+          const arrivals = items.length ? items : await apiGET<Arrival[]>('/api/arrivals');
+          const settled = await Promise.allSettled(
+            arrivals.slice(0, 30).map(a => apiGET<Update[]>(`/api/arrivals/${a.id}/updates`, true).then(list =>
+              list.map(u => ({ ...u, arrival_id: a.id }))
+            ))
+          );
+          const merged: Update[] = [];
+          for (const s of settled) {
+            if (s.status === 'fulfilled') merged.push(...s.value);
+          }
+          merged.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+          setFeed(merged.slice(0, 100));
+        }
+      } catch (e: any) {
+        setFeedErr(e.message || 'Greška pri učitavanju aktivnosti');
+      } finally {
+        setFeedLoading(false);
+      }
+    };
+    if (tab === 'updates') loadFeed();
+  }, [tab]);
 
   const load = async () => {
     setLoading(true);
@@ -467,7 +639,11 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         alert("VITE_API_KEY nije postavljen u .env.local");
         return;
       }
-      const created = await apiPOST<Arrival>("/api/arrivals", newForm, {
+      const payload = {
+        ...newForm,
+        eta: newForm.eta ? new Date(newForm.eta as string).toISOString() : null,
+      };
+      const created = await apiPOST<Arrival>("/api/arrivals", payload, {
         useApiKey: true,
       });
       setItems((prev) => [created, ...prev]);
@@ -519,24 +695,49 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0b1220", color: "#e6ebff" }}>
+    <div style={{ minHeight: "100vh", background: "#f7f8fa", color: "#0b1220" }}>
       <header style={styles.header}>
         <div>
           <strong>Arrivals</strong>{" "}
           <span style={{ opacity: 0.7 }}>• {user.name} ({user.role})</span>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <nav style={styles.tabs}>
+            <button
+              style={{
+                ...styles.tabBtn,
+                ...(tab === 'arrivals' ? styles.tabBtnActive : {})
+              }}
+              onClick={() => setTab('arrivals')}
+            >
+              Dolasci
+            </button>
+            <button
+              style={{
+                ...styles.tabBtn,
+                ...(tab === 'updates' ? styles.tabBtnActive : {})
+              }}
+              onClick={() => setTab('updates')}
+              title="Aktivnosti (globalne beleške)"
+            >
+              Aktivnosti
+            </button>
+            {user.role === 'admin' && (
+              <button
+                style={{
+                  ...styles.tabBtn,
+                  ...(tab === 'users' ? styles.tabBtnActive : {})
+                }}
+                onClick={() => setTab('users')}
+                title="Upravljanje korisnicima"
+              >
+                Korisnici
+              </button>
+            )}
+          </nav>
+
           <button style={styles.secondaryBtn} onClick={load}>Osveži</button>
           <button style={styles.secondaryBtn} onClick={() => setOpenCreate(true)}>+ Novi dolazak</button>
-          {user.role === "admin" && (
-            <button
-              style={styles.secondaryBtn}
-              onClick={() => setShowUsers(prev => !prev)}
-              title="Upravljanje korisnicima"
-            >
-              {showUsers ? "← Nazad na dolaske" : "Korisnici"}
-            </button>
-          )}
           <button style={styles.dangerGhost} onClick={() => { setToken(null); onLogout(); }}>Odjava</button>
         </div>
       </header>
@@ -545,7 +746,28 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         {loading && <div>Učitavanje...</div>}
         {err && <div style={styles.error}>{err}</div>}
 
-        {!showUsers && (
+        {tab === 'arrivals' && !loading && !err && (
+          <div style={styles.kpiRow}>
+            <div style={styles.kpiCard}>
+              <div style={styles.kpiLabel}>Ukupno</div>
+              <div style={styles.kpiValue}>{kpis.total}</div>
+            </div>
+            <div style={styles.kpiCard}>
+              <div style={styles.kpiLabel}>U dolasku</div>
+              <div style={styles.kpiValue}>{kpis.arriving}</div>
+            </div>
+            <div style={styles.kpiCard}>
+              <div style={styles.kpiLabel}>Stiglo</div>
+              <div style={styles.kpiValue}>{kpis.arrived}</div>
+            </div>
+            <div style={styles.kpiCardDanger}>
+              <div style={styles.kpiLabel}>Kašnjenja</div>
+              <div style={styles.kpiValue}>{kpis.delayed}</div>
+            </div>
+          </div>
+        )}
+
+        {tab === 'arrivals' && (
           <div style={{ display:"grid", gap:8, gridTemplateColumns:"1.2fr .8fr .8fr .6fr .6fr", marginBottom: 12 }}>
             <input
               style={styles.input}
@@ -573,9 +795,44 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           </div>
         )}
 
-        {!loading && !err && !showUsers && (
+        {tab === 'arrivals' && (
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', margin: '6px 0 10px' }}>
+            <button
+              style={styles.secondaryBtn}
+              onClick={() => exportArrivalsCSV(items)}
+              title="Izvezi CSV"
+            >CSV</button>
+            <button
+              style={styles.secondaryBtn}
+              onClick={() => exportArrivalsPDF(items)}
+              title="Izvezi PDF"
+            >PDF</button>
+            <button
+              style={styles.secondaryBtn}
+              onClick={() => exportArrivalsXLSX(items)}
+              title="Izvezi Excel (XLSX)"
+            >Excel</button>
+          </div>
+        )}
+
+        {!loading && !err && tab === 'arrivals' && (
           <div style={{ overflowX: "auto" }}>
+            <div style={{ fontSize: 12, opacity: 0.65, margin: '4px 0 8px' }}>
+              Savjet: dupli klik na polje za brzo uređivanje. Status mijenjajte iz padajućeg menija.
+            </div>
             <table style={styles.table}>
+              <colgroup>
+                <col style={{ width: 60 }} />      {/* ID */}
+                <col style={{ width: 180 }} />     {/* Dobavljač */}
+                <col style={{ width: 160 }} />     {/* Prevoznik */}
+                <col style={{ width: 140 }} />     {/* Tablice */}
+                <col style={{ width: 120 }} />     {/* Tip */}
+                <col style={{ width: 160 }} />     {/* ETA */}
+                <col style={{ width: 140 }} />     {/* Status */}
+                <col style={{ width: 240 }} />     {/* Napomena */}
+                <col style={{ width: 180 }} />     {/* Kreirano */}
+                <col style={{ width: 120 }} />     {/* Akcije */}
+              </colgroup>
               <thead>
                 <tr>
                   <th>ID</th>
@@ -627,7 +884,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
                           ))}
                         </select>
                       ) : (
-                        a.status
+                        <span style={getStatusChipStyle(a.status)}>{a.status}</span>
                       )}
                     </td>
                     <td style={{ maxWidth: 220 }}>
@@ -690,7 +947,41 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
             </div>
           </div>
         )}
-        {showUsers && user.role === "admin" && <UsersView />}
+        {tab === 'updates' && (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <h3>Aktivnosti</h3>
+            {feedLoading && <div>Učitavanje aktivnosti…</div>}
+            {feedErr && <div style={styles.error}>{feedErr}</div>}
+            {!feedLoading && !feedErr && (
+              <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, overflow: 'hidden' }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Vrijeme</th>
+                      <th>Dolazak</th>
+                      <th>Poruka</th>
+                      <th>Korisnik</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {feed.map(u => (
+                      <tr key={u.id}>
+                        <td>{new Date(u.created_at).toLocaleString()}</td>
+                        <td>#{u.arrival_id}</td>
+                        <td>{u.message}</td>
+                        <td>{u.user_id ?? '-'}</td>
+                      </tr>
+                    ))}
+                    {feed.length === 0 && (
+                      <tr><td colSpan={4} style={{ textAlign:'center', opacity:.7 }}>Nema aktivnosti.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+        {tab === 'users' && user.role === 'admin' && <UsersView />}
       </main>
 
       {/* Modal – kreiranje */}
@@ -936,60 +1227,60 @@ const styles: Record<string, React.CSSProperties> = {
   centeredPage: {
     minHeight: "100vh",
     display: "grid",
-    background: "#0b1220",
-    color: "#e6ebff",
+    background: "#f7f8fa",
+    color: "#0b1220",
     placeItems: "center",
     padding: 24,
   },
   card: {
     width: 360,
-    background: "rgba(255,255,255,0.03)",
-    border: "1px solid rgba(255,255,255,0.08)",
+    background: "#ffffff",
+    border: "1px solid rgba(0,0,0,0.08)",
     borderRadius: 12,
     padding: 16,
-    boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+    boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
   },
   header: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     padding: "12px 16px",
-    borderBottom: "1px solid rgba(255,255,255,0.08)",
+    borderBottom: "1px solid rgba(0,0,0,0.08)",
     position: "sticky",
     top: 0,
-    background: "#0b1220",
+    background: "#ffffff",
     zIndex: 2,
   },
   input: {
     padding: "10px 12px",
     borderRadius: 8,
-    border: "1px solid rgba(255,255,255,0.1)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#e6ebff",
+    border: "1px solid rgba(0,0,0,0.15)",
+    background: "#ffffff",
+    color: "#0b1220",
     outline: "none",
   },
   textarea: {
     padding: "10px 12px",
     borderRadius: 8,
-    border: "1px solid rgba(255,255,255,0.1)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#e6ebff",
+    border: "1px solid rgba(0,0,0,0.15)",
+    background: "#ffffff",
+    color: "#0b1220",
     outline: "none",
     minHeight: 80,
   },
   label: { fontSize: 12, opacity: 0.8 },
   error: {
-    background: "rgba(255,0,0,0.12)",
-    border: "1px solid rgba(255,0,0,0.3)",
-    color: "#ffb3b3",
+    background: "rgba(255,0,0,0.08)",
+    border: "1px solid rgba(255,0,0,0.25)",
+    color: "#9b1c1c",
     padding: "8px 10px",
     borderRadius: 8,
     marginTop: 8,
   },
   warn: {
-    background: "rgba(255,165,0,0.12)",
-    border: "1px solid rgba(255,165,0,0.3)",
-    color: "#ffd49a",
+    background: "rgba(255,165,0,0.10)",
+    border: "1px solid rgba(255,165,0,0.25)",
+    color: "#8a5a00",
     padding: "8px 10px",
     borderRadius: 8,
     marginTop: 8,
@@ -1006,39 +1297,40 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryBtn: {
     padding: "10px 14px",
     borderRadius: 8,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.05)",
-    color: "#e6ebff",
+    border: "1px solid rgba(0,0,0,0.14)",
+    background: "#ffffff",
+    color: "#0b1220",
     cursor: "pointer",
   },
   dangerGhost: {
     padding: "8px 12px",
     borderRadius: 8,
-    border: "1px solid rgba(255,77,77,0.3)",
+    border: "1px solid rgba(209,44,44,0.35)",
     background: "transparent",
-    color: "#ff9c9c",
+    color: "#d12c2c",
     cursor: "pointer",
   },
   ghostBtn: {
     padding: "8px 12px",
     borderRadius: 8,
-    border: "1px solid rgba(255,255,255,0.14)",
+    border: "1px solid rgba(0,0,0,0.14)",
     background: "transparent",
-    color: "#e6ebff",
+    color: "#0b1220",
     cursor: "pointer",
     marginRight: 6,
   },
   select: {
     padding: "8px 10px",
     borderRadius: 8,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.05)",
-    color: "#e6ebff",
+    border: "1px solid rgba(0,0,0,0.15)",
+    background: "#ffffff",
+    color: "#0b1220",
   },
   table: {
     width: "100%",
     borderCollapse: "separate",
     borderSpacing: 0,
+    tableLayout: "fixed",
   },
   modalBackdrop: {
     position: "fixed",
@@ -1052,12 +1344,50 @@ const styles: Record<string, React.CSSProperties> = {
   modal: {
     width: 520,
     maxWidth: "100%",
-    background: "rgba(15,20,35,1)",
-    color: "#e6ebff",
-    border: "1px solid rgba(255,255,255,0.08)",
+    background: "#ffffff",
+    color: "#0b1220",
+    border: "1px solid rgba(0,0,0,0.08)",
     borderRadius: 12,
     padding: 16,
   },
+  tabs: {
+    display: 'flex',
+    gap: 6,
+    padding: 4,
+    borderRadius: 10,
+    background: 'rgba(0,0,0,0.04)',
+    border: '1px solid rgba(0,0,0,0.08)'
+  },
+  tabBtn: {
+    padding: '8px 12px',
+    borderRadius: 8,
+    border: '1px solid transparent',
+    background: 'transparent',
+    color: '#0b1220',
+    cursor: 'pointer',
+  },
+  tabBtnActive: {
+    background: 'rgba(0,0,0,0.06)',
+    border: '1px solid rgba(0,0,0,0.14)'
+  },
+  kpiRow: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: 10,
+    marginBottom: 12,
+  },
+  kpiCard: {
+    padding: 12,
+    borderRadius: 12,
+    background: 'linear-gradient(180deg, rgba(0,0,0,0.03), rgba(0,0,0,0.01))',
+    border: '1px solid rgba(0,0,0,0.08)',
+  },
+  kpiCardDanger: {
+    padding: 12,
+    borderRadius: 12,
+    background: 'linear-gradient(180deg, rgba(244,63,94,0.10), rgba(244,63,94,0.05))',
+    border: '1px solid rgba(244,63,94,0.20)',
+  },
+  kpiLabel: { fontSize: 12, opacity: 0.75 },
+  kpiValue: { fontSize: 22, fontWeight: 700 },
 };
-
-// ——— Kraj ———————————————————————————————————————————————————————————————

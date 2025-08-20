@@ -1,8 +1,12 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-  DialogFooter
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,13 +22,28 @@ type Props = {
   title?: string;
 };
 
+const STATUS_OPTIONS = [
+  { value: "announced", label: "Najavljeno" },
+  { value: "arrived", label: "Stiglo" },
+  { value: "in_process", label: "U procesu" },
+  { value: "done", label: "Završeno" },
+  { value: "delayed", label: "Kašnjenje" },
+];
+
+const TYPE_OPTIONS = [
+  { value: "truck", label: "Šleper" },
+  { value: "container", label: "Kontejner" },
+  { value: "van", label: "Kombi" },
+  { value: "other", label: "Ostalo" },
+];
+
 export default function ArrivalFormDialog({
   open,
   onOpenChange,
   initial = {},
   onSubmit,
   submitting = false,
-  title = "Novi dolazak"
+  title = "Novi dolazak",
 }: Props) {
   const [form, setForm] = React.useState<Partial<Arrival>>({
     status: "announced",
@@ -38,16 +57,21 @@ export default function ArrivalFormDialog({
     setErrors({});
   }, [initial, open]);
 
-  const update = (k: keyof Arrival) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-    setForm((s) => ({ ...s, [k]: e.target.value }));
+  const update =
+    (k: keyof Arrival) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+      setForm((s) => ({ ...s, [k]: e.target.value }));
 
-  const required = (v?: string) => (v && v.trim().length > 0);
+  const required = (v?: string) => !!(v && v.trim().length > 0);
 
   const validate = () => {
     const next: Record<string, string> = {};
     if (!required(form.supplier as string)) next.supplier = "Obavezno polje";
     if (!required(form.plate as string)) next.plate = "Obavezno polje";
-    if (form.status && !["announced","arrived","in_process","done","delayed"].includes(String(form.status))) {
+    if (
+      form.status &&
+      !["announced", "arrived", "in_process", "done", "delayed"].includes(String(form.status))
+    ) {
       next.status = "Nepoznat status";
     }
     setErrors(next);
@@ -70,9 +94,16 @@ export default function ArrivalFormDialog({
     onOpenChange(false);
   };
 
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "TEXTAREA") {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent onKeyDown={onKeyDown}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>Popunite podatke i sačuvajte.</DialogDescription>
@@ -89,10 +120,7 @@ export default function ArrivalFormDialog({
             />
             {errors.supplier && <span className="text-xs text-red-500">{errors.supplier}</span>}
           </div>
-          <div className="grid gap-1">
-            <Label>Prevoznik</Label>
-            <Input value={form.carrier ?? ""} onChange={update("carrier")} placeholder="npr. DHL" aria-invalid={!!errors.carrier} />
-          </div>
+
           <div className="grid gap-1">
             <Label>Tablice <span className="text-red-500">*</span></Label>
             <Input
@@ -103,27 +131,67 @@ export default function ArrivalFormDialog({
             />
             {errors.plate && <span className="text-xs text-red-500">{errors.plate}</span>}
           </div>
+
+          <div className="grid gap-1">
+            <Label>Prevoznik</Label>
+            <Input
+              value={form.carrier ?? ""}
+              onChange={update("carrier")}
+              placeholder="npr. DHL"
+              aria-invalid={!!errors.carrier}
+            />
+          </div>
+
           <div className="grid gap-1">
             <Label>Tip</Label>
-            <Input value={form.type ?? "truck"} onChange={update("type")} placeholder="truck" aria-invalid={!!errors.type} />
+            <select
+              className="border rounded-md h-9 px-3 bg-background"
+              value={(form.type as string) ?? "truck"}
+              onChange={update("type")}
+            >
+              {TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           </div>
+
           <div className="grid gap-1">
             <Label>ETA</Label>
-            <Input value={form.eta ?? ""} onChange={update("eta")} placeholder="2025-08-22 14:00" aria-invalid={!!errors.eta} />
+            <Input
+              value={form.eta ?? ""}
+              onChange={update("eta")}
+              placeholder="2025-08-22 14:00"
+              aria-invalid={!!errors.eta}
+            />
           </div>
+
           <div className="grid gap-1">
             <Label>Status</Label>
-            <Input
-              value={form.status ?? "announced"}
+            <select
+              className="border rounded-md h-9 px-3 bg-background"
+              value={(form.status as string) ?? "announced"}
               onChange={update("status")}
-              placeholder="announced"
               aria-invalid={!!errors.status}
-            />
+            >
+              {STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
             {errors.status && <span className="text-xs text-red-500">{errors.status}</span>}
           </div>
+
           <div className="grid gap-1">
             <Label>Napomena</Label>
-            <Textarea value={form.note ?? ""} onChange={update("note")} placeholder="Dodatne informacije..." aria-invalid={!!errors.note} />
+            <Textarea
+              value={form.note ?? ""}
+              onChange={update("note")}
+              placeholder="Dodatne informacije…"
+              aria-invalid={!!errors.note}
+            />
           </div>
         </div>
 
@@ -135,7 +203,6 @@ export default function ArrivalFormDialog({
             {submitting ? "Snimam..." : "Sačuvaj"}
           </Button>
         </DialogFooter>
-        <div className="hidden" onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }} />
       </DialogContent>
     </Dialog>
   );

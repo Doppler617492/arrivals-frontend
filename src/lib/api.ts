@@ -1,5 +1,10 @@
 // Centralized API client + shared types for the Arrivals app.
 // It covers auth, arrivals CRUD, bulk ops, activity, uploads, exports and email.
+// 
+// Table cell utility classes for rendering Arrivals:
+// - Use "px-2 py-1" for all <td>
+// - ID column: <td className="px-2 py-1 text-xs text-gray-400 text-center">{arrival.id}</td>
+// - Other columns: <td className="px-2 py-1 truncate">{...}</td> or add "whitespace-nowrap" as needed
 
 // ==================
 // Shared type models
@@ -69,7 +74,6 @@ export type ApiResponse<T> = {
 // ==========
 // Base setup
 // ==========
-// Default to localhost:8081 if not provided
 const defaultBase = "http://localhost:8081";
 const base = ((import.meta as any).env?.VITE_API_BASE ?? defaultBase).replace(/\/$/, "");
 
@@ -104,18 +108,13 @@ async function parseMaybeJson(res: Response) {
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${base}${path}`, { ...init, headers: makeHeaders(init) });
-
-  // 204 No Content support
   if (res.status === 204) return undefined as unknown as T;
-
   if (!res.ok) {
     const payload = await parseMaybeJson(res);
-    // If JWT expired/invalid, drop token so UI can redirect to login
     if (res.status === 401 || res.status === 422) setToken(null);
     const message = typeof payload === "string" ? payload : JSON.stringify(payload);
     throw new Error(JSON.stringify({ status: res.status, message }));
   }
-
   return (await parseMaybeJson(res)) as T;
 }
 
@@ -145,84 +144,160 @@ export const api = {
   logout: () => { setToken(null); return Promise.resolve(); },
 
   // ----- Arrivals -----
-  listArrivals: () => http<Arrival[]>(`/api/arrivals`),
-  getArrival: (id: ID) => http<Arrival>(`/api/arrivals/${id}`),
-  createArrival: (data: CreateArrivalInput) => http<Arrival>(`/api/arrivals`, { method: "POST", body: JSON.stringify(data) }),
-  updateArrival: (id: ID, patch: Partial<Arrival>) => http<Arrival>(`/api/arrivals/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
-  bulkUpdate: (ids: ID[], patch: Partial<Arrival>) => http<Arrival[]>(`/api/arrivals/bulk`, { method: "POST", body: JSON.stringify({ ids, patch }) }),
+  listArrivals: () =>
+    http<Arrival[]>(`/api/arrivals`)
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
 
-  // Primary delete (matches backend DELETE /api/arrivals/<id>), with graceful fallback
-  deleteArrival: async (id: ID) => {
+  getArrival: (id: ID) =>
+    http<Arrival>(`/api/arrivals/${id}`)
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
+
+  createArrival: (data: CreateArrivalInput) =>
+    http<Arrival>(`/api/arrivals`, { method: "POST", body: JSON.stringify(data) })
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
+
+  updateArrival: (id: ID, patch: Partial<Arrival>) =>
+    http<Arrival>(`/api/arrivals/${id}`, { method: "PATCH", body: JSON.stringify(patch) })
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
+
+  bulkUpdate: (ids: ID[], patch: Partial<Arrival>) =>
+    http<Arrival[]>(`/api/arrivals/bulk`, { method: "POST", body: JSON.stringify({ ids, patch }) })
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
+
+  // Delete with graceful fallback (prefer explicit POST route first)
+  deleteArrival: async (id: ID): Promise<ApiResponse<{ deleted_id: ID }>> => {
+    // 1) Preferred explicit delete POST route
     try {
-      return await http<ApiResponse<{ deleted_id: ID }>>(`/api/arrivals/${id}`, { method: "DELETE" });
+      const resp = await http<ApiResponse<{ deleted_id: ID }>>(`/api/arrivals/${id}/delete`, { method: "POST" });
+      if (resp?.data?.deleted_id != null) return { ok: true, data: resp.data };
     } catch (e) {
-      // If DELETE is not allowed (405) or route missing (404), fallback to POST /api/arrivals/bulk-delete
-      let status: number | undefined;
+      // swallow and try next strategy
+    }
+    // 2) Standard RESTful delete
+    try {
+      const resp = await http<ApiResponse<{ deleted_id: ID }>>(`/api/arrivals/${id}`, { method: "DELETE" });
+      return { ok: true, data: resp.data ?? { deleted_id: id } };
+    } catch (e) {
+      // 3) Bulk-delete single id as last resort
       try {
-        const parsed = JSON.parse((e as Error).message);
-        status = parsed?.status;
-      } catch {}
-      if (status === 405 || status === 404) {
         const resp = await http<ApiResponse<{ deleted_ids: ID[] }>>(`/api/arrivals/bulk-delete`, {
           method: "POST",
           body: JSON.stringify({ ids: [id] }),
         });
-        // normalize shape to match single delete caller expectations
-        return { ok: resp.ok, data: { deleted_id: (resp as any).data?.deleted_ids?.[0] ?? id } } as ApiResponse<{ deleted_id: ID }>;
+        return { ok: true, data: { deleted_id: resp?.data?.deleted_ids?.[0] ?? id } };
+      } catch (error) {
+        return { ok: false, error: (error as Error).message };
       }
-      throw e;
     }
   },
 
-  // Some servers/frameworks dislike DELETE bodies; try DELETE with JSON, then fall back to POST bulk-delete
-  bulkDelete: async (ids: ID[]) => {
+  bulkDelete: async (ids: ID[]): Promise<ApiResponse<{ deleted_ids: ID[] }>> => {
+    // 1) Preferred explicit delete POST route
     try {
-      return await http<ApiResponse<{ deleted_ids: ID[] }>>(`/api/arrivals/bulk`, {
+      const resp = await http<ApiResponse<{ deleted_ids: ID[] }>>(`/api/arrivals/delete`, {
+        method: "POST",
+        body: JSON.stringify({ ids }),
+      });
+      if (resp?.data?.deleted_ids) return { ok: true, data: resp.data };
+    } catch (e) {
+      // ignore and try next
+    }
+    // 2) Alternate bulk-delete route
+    try {
+      const resp = await http<ApiResponse<{ deleted_ids: ID[] }>>(`/api/arrivals/bulk-delete`, {
+        method: "POST",
+        body: JSON.stringify({ ids }),
+      });
+      if (resp?.data?.deleted_ids) return { ok: true, data: resp.data };
+    } catch (e) {
+      // ignore and try next
+    }
+    // 3) RESTful bulk DELETE as last resort
+    try {
+      const resp = await http<ApiResponse<{ deleted_ids: ID[] }>>(`/api/arrivals/bulk`, {
         method: "DELETE",
         body: JSON.stringify({ ids }),
       });
-    } catch (e) {
-      // If method not allowed or route missing, try a compatible fallback
-      const err = ((): { status?: number } => { try { return JSON.parse((e as Error).message); } catch { return {}; } })();
-      if (err?.status === 405 || err?.status === 404) {
-        return await http<ApiResponse<{ deleted_ids: ID[] }>>(`/api/arrivals/bulk-delete`, {
-          method: "POST",
-          body: JSON.stringify({ ids }),
-        });
-      }
-      throw e;
+      return { ok: true, data: resp.data ?? { deleted_ids: ids } };
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
     }
   },
 
-  // ----- Activity (Updates tab) -----
-  listActivity: (arrivalId: ID) => http<Activity[]>(`/api/arrivals/${arrivalId}/activity`),
-  postActivity: (arrivalId: ID, action: string, payload?: Record<string, any>) =>
-    http<Activity>(`/api/arrivals/${arrivalId}/activity`, { method: "POST", body: JSON.stringify({ action, payload }) }),
+  // ----- Activity -----
+  listActivity: (arrivalId: ID) =>
+    http<Activity[]>(`/api/arrivals/${arrivalId}/activity`)
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
 
-  // ----- File uploads (CRM / docs) -----
-  listUploads: (arrivalId: ID) => http<Upload[]>(`/api/arrivals/${arrivalId}/files`),
+  postActivity: (arrivalId: ID, action: string, payload?: Record<string, any>) =>
+    http<Activity>(`/api/arrivals/${arrivalId}/activity`, { method: "POST", body: JSON.stringify({ action, payload }) })
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
+
+  // ----- Files -----
+  listUploads: (arrivalId: ID) =>
+    http<Upload[]>(`/api/arrivals/${arrivalId}/files`)
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
+
   uploadFile: (arrivalId: ID, file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-    return http<Upload>(`/api/arrivals/${arrivalId}/files`, { method: "POST", body: fd });
+    return http<Upload>(`/api/arrivals/${arrivalId}/files`, { method: "POST", body: fd })
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message }));
   },
-  deleteFile: (arrivalId: ID, uploadId: ID) => http<{ ok: boolean }>(`/api/arrivals/${arrivalId}/files/${uploadId}`, { method: "DELETE" }),
-  downloadFile: (arrivalId: ID, uploadId: ID) => httpBlob(`/api/arrivals/${arrivalId}/files/${uploadId}`),
 
-  // ----- Users & roles -----
-  listUsers: () => http<User[]>(`/api/users`),
-  createUser: (user: Partial<User> & { password: string }) => http<User>(`/api/users`, { method: "POST", body: JSON.stringify(user) }),
-  updateUser: (id: ID, patch: Partial<User> & { password?: string }) => http<User>(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
-  deleteUser: (id: ID) => http<ApiResponse<{ deleted_id: ID }>>(`/api/users/${id}`, { method: "DELETE" }),
+  deleteFile: (arrivalId: ID, uploadId: ID) =>
+    http<{ ok: boolean }>(`/api/arrivals/${arrivalId}/files/${uploadId}`, { method: "DELETE" })
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
 
-  // ----- Export (CSV / PDF / XLSX) -----
+  downloadFile: (arrivalId: ID, uploadId: ID) =>
+    httpBlob(`/api/arrivals/${arrivalId}/files/${uploadId}`)
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
+
+  // ----- Users -----
+  listUsers: () =>
+    http<User[]>(`/api/users`)
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
+
+  createUser: (user: Partial<User> & { password: string }) =>
+    http<User>(`/api/users`, { method: "POST", body: JSON.stringify(user) })
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
+
+  updateUser: (id: ID, patch: Partial<User> & { password?: string }) =>
+    http<User>(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify(patch) })
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
+
+  deleteUser: (id: ID) =>
+    http<ApiResponse<{ deleted_id: ID }>>(`/api/users/${id}`, { method: "DELETE" })
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
+
+  // ----- Export -----
   export: (format: "csv" | "pdf" | "xlsx", ids?: ID[]) =>
     httpBlob(`/api/arrivals/export/${format}${ids?.length ? `?ids=${encodeURIComponent(ids.join(","))}` : ""}`),
 
-  // ----- Email share -----
+  // ----- Email -----
   shareByEmail: (payload: { to: string; subject?: string; message?: string; arrival_ids?: ID[] }) =>
-    http<ApiResponse<null>>(`/api/share/email`, { method: "POST", body: JSON.stringify(payload) }),
+    http<ApiResponse<null>>(`/api/share/email`, { method: "POST", body: JSON.stringify(payload) })
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
 
   // ----- Health -----
-  health: () => http<{ ok: boolean }>(`/health`),
+  health: () =>
+    http<{ ok: boolean }>(`/health`)
+      .then(data => ({ ok: true, data }))
+      .catch(error => ({ ok: false, error: (error as Error).message })),
 };
