@@ -4,8 +4,17 @@ import { Button } from "@/components/ui/button";
 import DialogConfirm from "./DialogConfirm";
 import ArrivalFormDialog from "./ArrivalFormDialog";
 import { api } from "../lib/api";
-import type { Arrival } from "../lib/api";
+import type { Arrival, ID } from "../lib/api";
 import { useToast } from "../lib/toast";
+
+function parseError(err: unknown): { status?: number; message?: string } {
+  try {
+    const raw = (err as Error)?.message ?? String(err);
+    return JSON.parse(raw);
+  } catch {
+    return { message: (err as any)?.message ?? "Nešto je pošlo po zlu." };
+  }
+}
 
 export default function ArrivalsTable() {
   const [items, setItems] = React.useState<Arrival[]>([]);
@@ -19,12 +28,13 @@ export default function ArrivalsTable() {
   const [toDelete, setToDelete] = React.useState<Arrival | null>(null);
   const [deleting, setDeleting] = React.useState(false);
 
-  // (Optional) Edit
+  // Edit
   const [editItem, setEditItem] = React.useState<Arrival | null>(null);
   const [savingEdit, setSavingEdit] = React.useState(false);
 
-  // Auth token (if user is logged in)
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  // Token (za zaštitu akcija)
+  const token =
+    typeof window !== "undefined" ? window.localStorage.getItem("token") : null;
 
   const { toast } = useToast();
 
@@ -33,8 +43,13 @@ export default function ArrivalsTable() {
     try {
       const data = await api.listArrivals();
       setItems(data);
-    } catch (e: any) {
-      toast({ title: "Greška", description: e?.message ?? "Neuspješno učitavanje.", variant: "destructive" });
+    } catch (e) {
+      const { message } = parseError(e);
+      toast({
+        title: "Greška",
+        description: message ?? "Neuspješno učitavanje.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -44,61 +59,100 @@ export default function ArrivalsTable() {
     load();
   }, [load]);
 
-  // CREATE handler
+  // CREATE
   const handleCreate = async (payload: Partial<Arrival>) => {
     setCreating(true);
     try {
-      await api.createArrival(payload); // this should send X-API-Key (server-to-server style) or you can add an admin-only JWT route
+      // mapiramo minimalni input za backend
+      const body = {
+        supplier: payload.supplier ?? "",
+        plate: payload.plate ?? "",
+        type: (payload.type as any) ?? "truck",
+        carrier: payload.carrier ?? undefined,
+        note: payload.note ?? undefined,
+        status: (payload.status as any) ?? "announced",
+      };
+      await api.createArrival(body as any);
       setOpenCreate(false);
       toast({ title: "Kreirano", description: "Novi dolazak je dodat." });
       await load();
-    } catch (e: any) {
-      toast({ title: "Greška", description: e?.message ?? "Kreiranje nije uspjelo", variant: "destructive" });
+    } catch (e) {
+      const { message, status } = parseError(e);
+      toast({
+        title: "Greška",
+        description:
+          status === 401 || status === 403
+            ? "Niste prijavljeni ili nemate dozvolu."
+            : message ?? "Kreiranje nije uspjelo.",
+        variant: "destructive",
+      });
+      if (status === 401) {
+        localStorage.removeItem("token");
+        window.location.assign("/login");
+      }
     } finally {
       setCreating(false);
     }
   };
 
-  // DELETE handler (JWT protected)
+  // EDIT (PATCH)
+  const handleEdit = async (patch: Partial<Arrival>) => {
+    if (!editItem?.id) return;
+    setSavingEdit(true);
+    try {
+      await api.updateArrival(editItem.id as ID, patch);
+      setEditItem(null);
+      toast({
+        title: "Sačuvano",
+        description: `Dolazak #${editItem.id} je ažuriran.`,
+      });
+      await load();
+    } catch (e) {
+      const { message, status } = parseError(e);
+      toast({
+        title: "Greška",
+        description:
+          status === 401 || status === 403
+            ? "Niste prijavljeni ili nemate dozvolu."
+            : message ?? "Ažuriranje nije uspjelo.",
+        variant: "destructive",
+      });
+      if (status === 401) {
+        localStorage.removeItem("token");
+        window.location.assign("/login");
+      }
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // DELETE
   const confirmDelete = async () => {
-    if (!toDelete) return;
+    if (!toDelete?.id) return;
     setDeleting(true);
     try {
-      await api.deleteArrival(toDelete.id);
-      toast({ title: "Obrisano", description: `Dolazak #${toDelete.id} je obrisan.` });
+      await api.deleteArrival(toDelete.id as ID);
+      toast({
+        title: "Obrisano",
+        description: `Dolazak #${toDelete.id} je obrisan.`,
+      });
       setToDelete(null);
       await load();
-    } catch (e: any) {
-      const msg =
-        (e?.status === 401 || e?.status === 403)
+    } catch (e) {
+      const { message, status } = parseError(e);
+      const desc =
+        status === 401 || status === 403
           ? "Niste prijavljeni ili nemate dozvolu."
-          : (e?.status === 405)
-          ? "Server ne dozvoljava DELETE (405). Provjerite backend rutu /api/arrivals/<id> [DELETE]."
-          : (e?.message ?? "Brisanje nije uspjelo");
-      toast({ title: "Greška", description: msg, variant: "destructive" });
-      if (e?.status === 401) {
+          : status === 405
+          ? "Server ne dozvoljava DELETE. Pokušajte kasnije ili kontaktirajte IT."
+          : message ?? "Brisanje nije uspjelo.";
+      toast({ title: "Greška", description: desc, variant: "destructive" });
+      if (status === 401) {
         localStorage.removeItem("token");
-        // soft redirect
         window.location.assign("/login");
       }
     } finally {
       setDeleting(false);
-    }
-  };
-
-  // (Optional) EDIT handler via PATCH (role-based)
-  const handleEdit = async (payload: Partial<Arrival>) => {
-    if (!editItem) return;
-    setSavingEdit(true);
-    try {
-      await api.patchArrival(editItem.id, payload); // you already have role-based PATCH /status too
-      setEditItem(null);
-      toast({ title: "Sačuvano", description: `Dolazak #${editItem.id} ažuriran.` });
-      await load();
-    } catch (e: any) {
-      toast({ title: "Greška", description: e?.message ?? "Ažuriranje nije uspjelo", variant: "destructive" });
-    } finally {
-      setSavingEdit(false);
     }
   };
 
@@ -107,7 +161,13 @@ export default function ArrivalsTable() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-semibold">Dolazci</h1>
         <div className="flex items-center gap-2">
-          <Button variant="outline" className="px-4 py-2" onClick={load} disabled={loading} title="Osvježi listu">
+          <Button
+            variant="outline"
+            className="px-4 py-2"
+            onClick={load}
+            disabled={loading}
+            title="Osvježi listu"
+          >
             <RefreshCw className="mr-2 h-4 w-4" /> Osvježi
           </Button>
           <Button
@@ -123,11 +183,10 @@ export default function ArrivalsTable() {
         </div>
       </div>
 
-      {/* your table markup here; below is a sketch: */}
       <div className="rounded-xl border bg-white shadow-md">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b bg-gray-50 transition-colors">
+            <tr className="border-b bg-gray-50">
               <th className="text-left p-3">Dobavljač</th>
               <th className="text-left p-3">Prevoznik</th>
               <th className="text-left p-3">Tablice</th>
@@ -137,17 +196,20 @@ export default function ArrivalsTable() {
           </thead>
           <tbody>
             {items.map((a) => (
-              <tr key={a.id} className="border-b last:border-0 hover:bg-gray-100 transition-colors">
+              <tr
+                key={a.id}
+                className="border-b last:border-0 hover:bg-gray-100 transition-colors"
+              >
                 <td className="p-3">{a.supplier}</td>
                 <td className="p-3">{a.carrier}</td>
                 <td className="p-3">{a.plate}</td>
                 <td className="p-3">{a.status}</td>
                 <td className="p-3 text-right">
-                  <div className="flex justify-end space-x-2">
+                  <div className="flex justify-end gap-2">
                     <Button
                       size="sm"
                       variant="outline"
-                      className="transition-colors hover:bg-gray-100"
+                      className="hover:bg-gray-100"
                       onClick={() => setEditItem(a)}
                       disabled={!token}
                       title={!token ? "Prijavite se da uredite" : undefined}
@@ -157,18 +219,20 @@ export default function ArrivalsTable() {
                     <Button
                       size="sm"
                       variant="destructive"
-                      className="transition-colors hover:bg-red-600"
+                      className="hover:bg-red-600"
                       onClick={() => setToDelete(a)}
-                      disabled={(!token) || (deleting && toDelete?.id === a.id)}
+                      disabled={!token || (deleting && toDelete?.id === a.id)}
                       title={!token ? "Prijavite se da obrišete" : undefined}
                     >
                       <Trash className="h-4 w-4 mr-1" />
-                      {deleting && toDelete?.id === a.id ? "Brisanje..." : "Obriši"}
+                      {deleting && toDelete?.id === a.id
+                        ? "Brisanje..."
+                        : "Obriši"}
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
-                      className="transition-colors hover:bg-gray-100"
+                      className="hover:bg-gray-100"
                       onClick={() => alert(JSON.stringify(a, null, 2))}
                     >
                       <Eye className="h-4 w-4 mr-1" /> Pregledaj
@@ -177,6 +241,7 @@ export default function ArrivalsTable() {
                 </td>
               </tr>
             ))}
+
             {loading && (
               <tr>
                 <td className="p-6 text-center text-muted-foreground" colSpan={5}>
@@ -184,6 +249,7 @@ export default function ArrivalsTable() {
                 </td>
               </tr>
             )}
+
             {!loading && items.length === 0 && (
               <tr>
                 <td className="p-6 text-center text-muted-foreground" colSpan={5}>
@@ -195,7 +261,7 @@ export default function ArrivalsTable() {
         </table>
       </div>
 
-      {/* Create dialog */}
+      {/* Create */}
       <ArrivalFormDialog
         open={openCreate}
         onOpenChange={setOpenCreate}
@@ -204,7 +270,7 @@ export default function ArrivalsTable() {
         title="Novi dolazak"
       />
 
-      {/* Edit dialog */}
+      {/* Edit */}
       <ArrivalFormDialog
         open={!!editItem}
         onOpenChange={(v) => !v && setEditItem(null)}
