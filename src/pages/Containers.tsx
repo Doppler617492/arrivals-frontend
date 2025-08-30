@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listContainers, createContainer, updateContainer, deleteContainer, type Container } from "../lib/api";
 
-const API_BASE = (import.meta as any).env?.VITE_API_BASE || "http://localhost:8081";
+/**
+ * Base URL for the backend API (falls back to localhost if the Vite env var is missing)
+ */
+const API_BASE: string =
+  (import.meta as any)?.env?.VITE_API_BASE || "http://localhost:8081";
 
+/** Simple metadata for container files returned by the backend */
 type FileMeta = {
   id: number;
   filename: string;
@@ -11,27 +16,58 @@ type FileMeta = {
   created_at?: string;
 };
 
+/** Read current token from localStorage and expose it as a hook */
+function useToken() {
+  const [t, setT] = useState<string | null>(localStorage.getItem("token"));
+  useEffect(() => {
+    const onStorage = () => setT(localStorage.getItem("token"));
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  return t;
+}
+
+/** Authorization header helper */
 function authHeaders() {
   const t = localStorage.getItem("token") || "";
-  return t ? { Authorization: `Bearer ${t}` } : {};
+  return t ? { Authorization: `Bearer ${t}` } as const : {};
 }
 
 export default function ContainersPage() {
+  // refs for per-row hidden file inputs
   const fileInputsRef = useRef<Record<number, HTMLInputElement | null>>({});
+
+  // modal + file preview state
   const [filesModalId, setFilesModalId] = useState<number | null>(null);
   const [filesList, setFilesList] = useState<FileMeta[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
-
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewName, setPreviewName] = useState<string | null>(null);
 
+  // table state
   const [rows, setRows] = useState<Container[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // auth token
   const token = useToken();
 
+  // form state for create
   const [form, setForm] = useState<Partial<Container>>({
-    supplier: "", proforma_no: "", cargo: "", container_no: "", roba: "",
-    etd: "", delivery: "", eta: "", cargo_qty: 1, contain_price: 0, total: 0, deposit: 0, balance: 0, agent: "", status: "kreiran"
+    supplier: "",
+    proforma_no: "",
+    cargo: "",
+    container_no: "",
+    roba: "",
+    etd: "",
+    delivery: "",
+    eta: "",
+    cargo_qty: 1,
+    contain_price: 0,
+    total: 0,
+    deposit: 0,
+    balance: 0,
+    agent: "",
+    status: "kreiran",
   });
 
   async function refresh() {
@@ -39,6 +75,8 @@ export default function ContainersPage() {
     try {
       const data = await listContainers();
       setRows(data);
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoading(false);
     }
@@ -58,11 +96,10 @@ export default function ContainersPage() {
       });
       if (!res.ok) throw new Error(`List files failed: ${res.status}`);
       const data = await res.json();
-      setFilesList(Array.isArray(data) ? data : (data.files || []));
+      setFilesList(Array.isArray(data) ? data : data.files || []);
     } catch (err) {
       console.error(err);
       alert("Ne mogu učitati fajlove za ovaj kontejner.");
-      // keep modal open, show empty list
       setFilesList([]);
     } finally {
       setFilesLoading(false);
@@ -72,7 +109,7 @@ export default function ContainersPage() {
   async function uploadFiles(containerId: number, files: FileList | null) {
     if (!files || files.length === 0) return;
     const fd = new FormData();
-    Array.from(files).forEach(f => fd.append("files", f));
+    Array.from(files).forEach((f) => fd.append("files", f));
     try {
       const res = await fetch(`${API_BASE}/api/containers/${containerId}/files`, {
         method: "POST",
@@ -85,8 +122,6 @@ export default function ContainersPage() {
       }
       // osvježi listu za modal ako je otvoren
       if (filesModalId === containerId) await listFiles(containerId);
-      // i osvježi tabelu (npr. badge broja fajlova kad ga dodaš u budućnosti)
-      // await refresh(); // trenutno nije potrebno
       alert("Fajlovi su uploadovani.");
     } catch (err) {
       console.error(err);
@@ -101,10 +136,13 @@ export default function ContainersPage() {
   async function deleteFile(containerId: number, fileId: number) {
     if (!confirm("Obrisati fajl?")) return;
     try {
-      const res = await fetch(`${API_BASE}/api/containers/${containerId}/files/${fileId}`, {
-        method: "DELETE",
-        headers: { ...authHeaders() },
-      });
+      const res = await fetch(
+        `${API_BASE}/api/containers/${containerId}/files/${fileId}`,
+        {
+          method: "DELETE",
+          headers: { ...authHeaders() },
+        }
+      );
       if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
       await listFiles(containerId);
       setPreviewUrl(null);
@@ -115,22 +153,38 @@ export default function ContainersPage() {
     }
   }
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+  }, []);
 
   async function onAdd(e: React.FormEvent) {
     e.preventDefault();
-    const t = token;
-    if (!t) return alert("Niste prijavljeni.");
-    await createContainer(form as any, t);
-    setForm({ supplier: "", proforma_no: "", cargo: "", container_no: "", roba: "", etd: "", delivery: "", eta: "", cargo_qty: 1, contain_price: 0, total: 0, deposit: 0, balance: 0, agent: "", status: "kreiran" });
+    if (!token) return alert("Niste prijavljeni.");
+    await createContainer(form as any, token);
+    setForm({
+      supplier: "",
+      proforma_no: "",
+      cargo: "",
+      container_no: "",
+      roba: "",
+      etd: "",
+      delivery: "",
+      eta: "",
+      cargo_qty: 1,
+      contain_price: 0,
+      total: 0,
+      deposit: 0,
+      balance: 0,
+      agent: "",
+      status: "kreiran",
+    });
     await refresh();
   }
 
   async function onDelete(id: number) {
-    const t = token;
-    if (!t) return alert("Niste prijavljeni.");
+    if (!token) return alert("Niste prijavljeni.");
     if (!confirm("Obrisati ovaj kontejner?")) return;
-    await deleteContainer(id, t);
+    await deleteContainer(id, token);
     await refresh();
   }
 
@@ -142,80 +196,167 @@ export default function ContainersPage() {
         <div className="grid">
           <label>
             Dobavljač
-            <input value={form.supplier||""} onChange={e=>setForm(f=>({...f, supplier:e.target.value}))}/>
+            <input
+              value={form.supplier || ""}
+              onChange={(e) => setForm((f) => ({ ...f, supplier: e.target.value }))}
+            />
           </label>
           <label>
             Proforma
-            <input value={form.proforma_no||""} onChange={e=>setForm(f=>({...f, proforma_no:e.target.value}))}/>
+            <input
+              value={form.proforma_no || ""}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, proforma_no: e.target.value }))
+              }
+            />
           </label>
           <label>
             ETD (YYYY-MM-DD)
-            <input value={form.etd||""} onChange={e=>setForm(f=>({...f, etd:e.target.value}))}/>
+            <input
+              value={form.etd || ""}
+              onChange={(e) => setForm((f) => ({ ...f, etd: e.target.value }))}
+            />
           </label>
           <label>
             Isporuka (Delivery)
-            <input value={form.delivery||""} onChange={e=>setForm(f=>({...f, delivery:e.target.value}))}/>
+            <input
+              value={form.delivery || ""}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, delivery: e.target.value }))
+              }
+            />
           </label>
           <label>
             ETA (YYYY-MM-DD)
-            <input value={form.eta||""} onChange={e=>setForm(f=>({...f, eta:e.target.value}))}/>
+            <input
+              value={form.eta || ""}
+              onChange={(e) => setForm((f) => ({ ...f, eta: e.target.value }))}
+            />
           </label>
           <label>
             Količina (Cargo Qty)
-            <input type="number" step="1" value={form.cargo_qty??1} onChange={e=>setForm(f=>({...f, cargo_qty:Number(e.target.value)}))}/>
+            <input
+              type="number"
+              step="1"
+              value={form.cargo_qty ?? 1}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, cargo_qty: Number(e.target.value) }))
+              }
+            />
           </label>
           <label>
             Tip (npr. 40HQ)
-            <input value={form.cargo||""} onChange={e=>setForm(f=>({...f, cargo:e.target.value}))}/>
+            <input
+              value={form.cargo || ""}
+              onChange={(e) => setForm((f) => ({ ...f, cargo: e.target.value }))}
+            />
           </label>
           <label>
             Broj kontejnera
-            <input value={form.container_no||""} onChange={e=>setForm(f=>({...f, container_no:e.target.value}))}/>
+            <input
+              value={form.container_no || ""}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, container_no: e.target.value }))
+              }
+            />
           </label>
           <label>
             Roba
-            <input value={form.roba||""} onChange={e=>setForm(f=>({...f, roba:e.target.value}))}/>
+            <input
+              value={form.roba || ""}
+              onChange={(e) => setForm((f) => ({ ...f, roba: e.target.value }))}
+            />
           </label>
           <label>
             Cijena kontejnera
-            <input type="number" step="0.01" value={form.contain_price??0} onChange={e=>setForm(f=>({...f, contain_price:Number(e.target.value)}))}/>
+            <input
+              type="number"
+              step="0.01"
+              value={form.contain_price ?? 0}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, contain_price: Number(e.target.value) }))
+              }
+            />
           </label>
           <label>
             Agent
-            <input value={form.agent||""} onChange={e=>setForm(f=>({...f, agent:e.target.value}))}/>
+            <input
+              value={form.agent || ""}
+              onChange={(e) => setForm((f) => ({ ...f, agent: e.target.value }))}
+            />
           </label>
           <label>
             Total
-            <input type="number" step="0.01" value={form.total??0} onChange={e=>setForm(f=>({...f, total:Number(e.target.value)}))}/>
+            <input
+              type="number"
+              step="0.01"
+              value={form.total ?? 0}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, total: Number(e.target.value) }))
+              }
+            />
           </label>
           <label>
             Depozit
-            <input type="number" step="0.01" value={form.deposit??0} onChange={e=>setForm(f=>({...f, deposit:Number(e.target.value)}))}/>
+            <input
+              type="number"
+              step="0.01"
+              value={form.deposit ?? 0}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, deposit: Number(e.target.value) }))
+              }
+            />
           </label>
           <label>
             Balans
-            <input type="number" step="0.01" value={form.balance??0} onChange={e=>setForm(f=>({...f, balance:Number(e.target.value)}))}/>
+            <input
+              type="number"
+              step="0.01"
+              value={form.balance ?? 0}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, balance: Number(e.target.value) }))
+              }
+            />
           </label>
           <label>
             Status
-            <input value={form.status||"kreiran"} onChange={e=>setForm(f=>({...f, status:e.target.value}))}/>
+            <input
+              value={form.status || "kreiran"}
+              onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+            />
           </label>
         </div>
         <button type="submit">Dodaj</button>
       </form>
 
       <div className="card">
-        {loading ? <p>Učitavanje…</p> : (
+        {loading ? (
+          <p>Učitavanje…</p>
+        ) : (
           <table className="table">
             <thead>
               <tr>
-                <th>#</th><th>Dobavljač</th><th>Proforma</th><th>ETD</th><th>Delivery</th><th>ETA</th>
-                <th>Qty</th><th>Tip</th><th>Kontejner</th><th>Roba</th>
-                <th>Cijena</th><th>Agent</th><th>Total</th><th>Depozit</th><th>Balans</th><th>Status</th><th style={{width: 160}}></th>
+                <th>#</th>
+                <th>Dobavljač</th>
+                <th>Proforma</th>
+                <th>ETD</th>
+                <th>Delivery</th>
+                <th>ETA</th>
+                <th>Qty</th>
+                <th>Tip</th>
+                <th>Kontejner</th>
+                <th>Roba</th>
+                <th>Cijena</th>
+                <th>Agent</th>
+                <th>Total</th>
+                <th>Depozit</th>
+                <th>Balans</th>
+                <th>Status</th>
+                <th style={{ width: 160 }} />
               </tr>
             </thead>
             <tbody>
-              {rows.map(r=>(
+              {rows.map((r) => (
                 <tr key={r.id}>
                   <td>{r.id}</td>
                   <td>{r.supplier}</td>
@@ -239,11 +380,17 @@ export default function ContainersPage() {
                       type="file"
                       multiple
                       style={{ display: "none" }}
-                      ref={el => (fileInputsRef.current[r.id] = el)}
-                      onChange={e => uploadFiles(r.id, e.target.files)}
+                      ref={(el) => (fileInputsRef.current[r.id] = el)}
+                      onChange={(e) => uploadFiles(r.id, e.target.files)}
                     />
                     <div className="row-actions">
-                      <button type="button" className="btn small ghost" onClick={() => listFiles(r.id)}>Fajlovi</button>
+                      <button
+                        type="button"
+                        className="btn small ghost"
+                        onClick={() => listFiles(r.id)}
+                      >
+                        Fajlovi
+                      </button>
                       <button
                         type="button"
                         className="btn small"
@@ -255,7 +402,13 @@ export default function ContainersPage() {
                       >
                         Upload
                       </button>
-                      <button type="button" className="btn small danger" onClick={() => onDelete(r.id)}>Obriši</button>
+                      <button
+                        type="button"
+                        className="btn small danger"
+                        onClick={() => onDelete(r.id)}
+                      >
+                        Obriši
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -266,19 +419,27 @@ export default function ContainersPage() {
       </div>
 
       {filesModalId !== null && (
-        <div className="modal-backdrop" onClick={()=>{
-          setFilesModalId(null);
-          setPreviewUrl(null);
-          setPreviewName(null);
-        }}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            setFilesModalId(null);
+            setPreviewUrl(null);
+            setPreviewName(null);
+          }}
+        >
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <strong>Fajlovi za kontejner #{filesModalId}</strong>
-              <button className="btn small ghost" onClick={()=>{
-                setFilesModalId(null);
-                setPreviewUrl(null);
-                setPreviewName(null);
-              }}>Zatvori</button>
+              <button
+                className="btn small ghost"
+                onClick={() => {
+                  setFilesModalId(null);
+                  setPreviewUrl(null);
+                  setPreviewName(null);
+                }}
+              >
+                Zatvori
+              </button>
             </div>
             {filesLoading ? (
               <p>Učitavanje…</p>
@@ -287,12 +448,19 @@ export default function ContainersPage() {
             ) : (
               <>
                 <ul className="files">
-                  {filesList.map(f => (
+                  {filesList.map((f) => (
                     <li key={f.id}>
-                      <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%"}}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          width: "100%",
+                        }}
+                      >
                         <a
                           href="#"
-                          onClick={e => {
+                          onClick={(e) => {
                             e.preventDefault();
                             if (f.url) {
                               setPreviewUrl(f.url);
@@ -302,23 +470,45 @@ export default function ContainersPage() {
                         >
                           {f.filename}
                         </a>
-                        <button className="btn xsmall danger" onClick={()=>deleteFile(filesModalId, f.id)}>Obriši</button>
+                        <button
+                          className="btn xsmall danger"
+                          onClick={() => deleteFile(filesModalId, f.id)}
+                        >
+                          Obriši
+                        </button>
                       </div>
                     </li>
                   ))}
                 </ul>
                 {previewUrl && (
-                  <div style={{marginTop: 12, position: "relative"}}>
-                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6}}>
+                  <div style={{ marginTop: 12, position: "relative" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 6,
+                      }}
+                    >
                       <strong>Pregled: {previewName}</strong>
-                      <button className="btn xsmall ghost" onClick={()=>{
-                        setPreviewUrl(null);
-                        setPreviewName(null);
-                      }}>Zatvori pregled</button>
+                      <button
+                        className="btn xsmall ghost"
+                        onClick={() => {
+                          setPreviewUrl(null);
+                          setPreviewName(null);
+                        }}
+                      >
+                        Zatvori pregled
+                      </button>
                     </div>
                     <iframe
                       src={previewUrl}
-                      style={{width: "100%", height: "400px", border: "1px solid #ccc", borderRadius: 8}}
+                      style={{
+                        width: "100%",
+                        height: "400px",
+                        border: "1px solid #ccc",
+                        borderRadius: 8,
+                      }}
                       title={`Preview of ${previewName}`}
                     />
                   </div>

@@ -9,6 +9,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+/**
+ * NOTE:
+ * - Naziv fajla je `ArrivalForm.tsx`, ali komponenta u njemu je `DialogConfirm`.
+ * - Predlog: preimenuj fajl u `DialogConfirm.tsx` (ili premesti ovu komponentu tamo),
+ *   a u ovom fajlu napravi stvarni formular za kreiranje/izmjenu "Arrival".
+ * - Za sada ostavljamo funkcionalnost netaknutom da ništa ne "pukne".
+ */
+
 type Props = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -53,12 +61,18 @@ export default function DialogConfirm({
         </DialogHeader>
 
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy || loading}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={busy || loading}
+            aria-disabled={busy || loading}
+          >
             {cancelLabel}
           </Button>
           <Button
             onClick={handleConfirm}
             disabled={busy || loading}
+            aria-busy={busy || loading}
             variant={destructive ? "destructive" : "default"}
           >
             {(busy || loading) ? "Obrada…" : confirmLabel}
