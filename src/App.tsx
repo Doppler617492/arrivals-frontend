@@ -1,110 +1,112 @@
 // src/App.tsx
 import React from "react";
-import Dashboard from "./pages/Dashboard";
-import styles from "./styles";
+import LoginView from "./features/auth/LoginView";
+import ArrivalsTable from "./components/ArrivalsTable";
+import UsersPage from "./pages/UsersPage";
+import ContainersPage from "./pages/Containers";
+import { apiGET, getToken, setToken } from "./api/client";
 import type { User } from "./types";
-import { apiPOST, apiGET, getToken, setToken } from "./api/client";
+import "./index.css";
+
+type Tab = "arrivals" | "containers" | "users";
 
 export default function App() {
   const [user, setUser] = React.useState<User | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [err, setErr] = React.useState<string | null>(null);
+  const [tab, setTab] = React.useState<Tab>("arrivals");
+  const [loadingMe, setLoadingMe] = React.useState(true);
 
-  // pokušaj automatskog login-a ako postoji token
   React.useEffect(() => {
-    const run = async () => {
-      setLoading(true);
-      setErr(null);
+    const t = getToken();
+    if (!t) { setLoadingMe(false); return; }
+    (async () => {
       try {
-        if (!getToken()) {
-          setLoading(false);
-          return;
-        }
         const me = await apiGET<{ user: User }>("/auth/me", true);
         setUser(me.user);
-      } catch (e: any) {
-        setErr(null); // token nevažeći – ne smaramo porukom, samo pokaži login
+      } catch {
         setToken(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-    run();
+        setUser(null);
+      } finally { setLoadingMe(false); }
+    })();
   }, []);
 
-  const onLogout = () => {
-    setToken(null);
-    setUser(null);
-  };
+  if (loadingMe) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-[hsl(var(--background))] text-[hsl(var(--foreground))]">
+        <div className="animate-pulse text-sm opacity-70">Učitavanje…</div>
+      </div>
+    );
+  }
 
-  if (loading) return <div style={{ padding: 24 }}>Učitavanje…</div>;
-  if (user) return <Dashboard user={user} onLogout={onLogout} />;
-
-  return <Login onLoggedIn={setUser} />;
-}
-
-/* ------------------------------ Minimal Login ------------------------------ */
-function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
-  const [email, setEmail] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
-  const [err, setErr] = React.useState<string | null>(null);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      // backend vraća { access_token, user? }
-      const res = await apiPOST<{ access_token: string; user?: User }>(
-        "/auth/login",
-        { email, password },
-        { auth: false }
-      );
-      setToken(res.access_token);
-      if (res.user) {
-        onLoggedIn(res.user);
-      } else {
-        const me = await apiGET<{ user: import("./types").User }>("/auth/me", true);
-        onLoggedIn(me.user);
-      }
-    } catch (e: any) {
-      setErr(e.message || "Prijava nije uspjela");
-    } finally {
-      setBusy(false);
-    }
-  };
+  if (!user) {
+    return <div className="min-h-screen grid place-items-center"><LoginView onLoggedIn={setUser} /></div>;
+  }
 
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "linear-gradient(180deg,#f7f9ff,#eef2ff)" }}>
-      <form onSubmit={submit} style={{ display: "grid", gap: 10, width: 320, padding: 20, border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12, background: "#fff" }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 6 }}>
-          <img src="/logo-cungu.png" alt="Cungu" style={{ width: 28, height: 28, borderRadius: 6 }} />
-          <div style={{ fontWeight: 800 }}>Arrivals — Prijava</div>
+    <div className="min-h-screen bg-[#f7f8fb] text-[hsl(var(--foreground))]">
+      {/* Top bar */}
+      <header className="sticky top-0 z-30 border-b border-[hsl(var(--border))] bg-white/80 backdrop-blur">
+        <div className="mx-auto max-w-[1200px] px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <img src="/logo-cungu.png" alt="Cungu" className="w-7 h-7 rounded-md shadow" />
+            <div className="font-extrabold tracking-tight">Arrivals</div>
+            <nav className="ml-6 flex items-center gap-2 text-sm">
+              <TabBtn current={tab} setTab={setTab} id="arrivals">Dolasci</TabBtn>
+              <TabBtn current={tab} setTab={setTab} id="containers">Kontejneri</TabBtn>
+              <TabBtn current={tab} setTab={setTab} id="users">Korisnici</TabBtn>
+            </nav>
+          </div>
+          <div className="flex items-center gap-3 text-sm">
+            <span className="hidden sm:inline opacity-70">{user.name} • {user.role}</span>
+            <button
+              className="btn small ghost"
+              onClick={() => { setToken(null); setUser(null); }}
+            >
+              Odjava
+            </button>
+          </div>
         </div>
-        {err && <div style={styles.error}>{err}</div>}
-        <input
-          style={styles.input}
-          type="email"
-          placeholder="Email"
-          autoComplete="username"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
-        <input
-          style={styles.input}
-          type="password"
-          placeholder="Lozinka"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-        <button style={styles.primaryBtn} type="submit" disabled={busy}>
-          {busy ? "Prijavljujem…" : "Prijavi se"}
-        </button>
-      </form>
+      </header>
+
+      {/* Page container */}
+      <main className="mx-auto max-w-[1200px] px-4 py-6">
+        {tab === "arrivals" && (
+          <section className="card">
+            <h1 className="text-[18px] font-semibold mb-3">Dolasci</h1>
+            <ArrivalsTable />
+          </section>
+        )}
+        {tab === "containers" && (
+          <section className="card">
+            <h1 className="text-[18px] font-semibold mb-3">Kontejneri</h1>
+            <ContainersPage />
+          </section>
+        )}
+        {tab === "users" && (
+          <section className="card">
+            <h1 className="text-[18px] font-semibold mb-3">Korisnici</h1>
+            <UsersPage />
+          </section>
+        )}
+      </main>
     </div>
+  );
+}
+
+function TabBtn({
+  id, current, setTab, children,
+}: { id: Tab; current: Tab; setTab: (t: Tab) => void; children: React.ReactNode }) {
+  const active = current === id;
+  return (
+    <button
+      onClick={() => setTab(id)}
+      className={[
+        "px-3 py-1.5 rounded-md transition",
+        active
+          ? "bg-[hsl(var(--secondary))] text-[hsl(var(--foreground))] font-semibold shadow-sm"
+          : "text-gray-600 hover:bg-gray-100"
+      ].join(" ")}
+    >
+      {children}
+    </button>
   );
 }

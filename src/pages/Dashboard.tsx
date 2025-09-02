@@ -1,5 +1,6 @@
 // src/pages/Dashboard.tsx
 import React, { useEffect, useMemo, useState } from "react";
+// density toggle
 import styles from "../styles";
 import type { User, Arrival, Update, FileMeta } from "../types";
 import InlineEdit from "../components/InlineEdit";
@@ -626,7 +627,7 @@ const BarChart: React.FC<{
   );
 };
 /* ================================ KONTEJNERI — FULL VIEW ================================ */
-function ContainersView({ user }: { user: User }) {
+function ContainersView({ user, compact }: { user: User; compact: boolean }) {
   const canEdit = user.role === "admin";
 
   const [rows, setRows] = useState<ContainerRow[]>([]);
@@ -895,12 +896,19 @@ function ContainersView({ user }: { user: User }) {
             </div>
           </div>
 
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '6px 0 10px' }}>
+          <label style={{ fontSize: 12, opacity: 0.85, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <input type="checkbox" checked={compact} onChange={() => { /* controlled by parent; noop here */ }} />
+            Kompaktno
+          </label>
+        </div>
+
           {/* Table */}
           <div style={{ overflowX: "auto" }}>
             <div style={{ fontSize:12, opacity:.65, margin:'4px 0 8px' }}>
               Savjet: <strong>dupli klik</strong> za brzo uređivanje. Polja "Ukupno" i "Depozit" automatski računaju "Balans".
             </div>
-            <table className="compactTable" style={styles.table}>
+          <table className={compact ? 'compactTable' : ''} style={styles.table}>
               <thead>
                 <tr>
                   <th>ID</th>
@@ -1071,6 +1079,8 @@ function ContainersView({ user }: { user: User }) {
 
 export default function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   // ——— Arrivals state
+  // Table density (to match stari "kompaktni" izgled)
+  const [compact, setCompact] = useState(true);
   const [items, setItems] = useState<Arrival[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -1401,6 +1411,13 @@ export default function Dashboard({ user, onLogout }: { user: User; onLogout: ()
               </select>
             </div>
 
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '6px 0 10px' }}>
+              <label style={{ fontSize: 12, opacity: 0.85, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={compact} onChange={e => setCompact(e.target.checked)} />
+                Kompaktno
+              </label>
+            </div>
+
             {/* Export dugmad */}
             <div style={{ display:'flex', gap:10, justifyContent:'flex-end', margin:'8px 0 12px' }}>
               <button style={styles.secondaryBtn} onClick={() => exportArrivalsCSV(items)}>CSV</button>
@@ -1415,7 +1432,7 @@ export default function Dashboard({ user, onLogout }: { user: User; onLogout: ()
             <div style={{ fontSize:12, opacity:.65, margin:'4px 0 8px' }}>
               Savjet: <strong>dupli klik</strong> na polje za brzo uređivanje. Status mijenjajte iz padajućeg menija.
             </div>
-            <table className="compactTable" style={styles.table}>
+            <table className={compact ? 'compactTable' : ''} style={styles.table}>
               <thead>
                 <tr>
                   <th>ID</th>
@@ -1647,7 +1664,7 @@ export default function Dashboard({ user, onLogout }: { user: User; onLogout: ()
         )}
  {/* Kontejneri — FULL */}
         {tab === 'containers' && (
-          <ContainersView user={user} />
+          <ContainersView user={user} compact={compact} />
         )}
 
         {/* Users (admin) */}

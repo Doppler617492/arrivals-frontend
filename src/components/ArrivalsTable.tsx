@@ -1,11 +1,14 @@
 import * as React from "react";
 import { Plus, Trash, Pencil, RefreshCw, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import DialogConfirm from "./DialogConfirm";
+import DialogConfirm from "./ui/DialogConfirm";
 import ArrivalFormDialog from "./ArrivalFormDialog";
 import { api } from "../lib/api";
 import type { Arrival, ID } from "../lib/api";
 import { useToast } from "../lib/toast";
+
+const TD = "px-3 py-2 align-middle";
+const TH = "px-3 py-2 text-left font-semibold text-gray-700";
 
 function parseError(err: unknown): { status?: number; message?: string } {
   try {
@@ -144,7 +147,7 @@ export default function ArrivalsTable() {
         status === 401 || status === 403
           ? "Niste prijavljeni ili nemate dozvolu."
           : status === 405
-          ? "Server ne dozvoljava DELETE. Pokušajte kasnije ili kontaktirajte IT."
+          ? "Server ne dozvoljava DELETE (405). Osvježite stranicu ili kontaktirajte IT."
           : message ?? "Brisanje nije uspjelo.";
       toast({ title: "Greška", description: desc, variant: "destructive" });
       if (status === 401) {
@@ -157,8 +160,8 @@ export default function ArrivalsTable() {
   };
 
   return (
-    <main className="p-6">
-      <div className="flex items-center justify-between mb-4">
+    <main className="p-6 bg-slate-50 min-h-screen">
+      <div className="flex items-center justify-between mb-5">
         <h1 className="text-xl font-semibold">Dolazci</h1>
         <div className="flex items-center gap-2">
           <Button
@@ -183,82 +186,84 @@ export default function ArrivalsTable() {
         </div>
       </div>
 
-      <div className="rounded-xl border bg-white shadow-md">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-gray-50">
-              <th className="text-left p-3">Dobavljač</th>
-              <th className="text-left p-3">Prevoznik</th>
-              <th className="text-left p-3">Tablice</th>
-              <th className="text-left p-3">Status</th>
-              <th className="text-right p-3">Akcije</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((a) => (
-              <tr
-                key={a.id}
-                className="border-b last:border-0 hover:bg-gray-100 transition-colors"
-              >
-                <td className="p-3">{a.supplier}</td>
-                <td className="p-3">{a.carrier}</td>
-                <td className="p-3">{a.plate}</td>
-                <td className="p-3">{a.status}</td>
-                <td className="p-3 text-right">
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="hover:bg-gray-100"
-                      onClick={() => setEditItem(a)}
-                      disabled={!token}
-                      title={!token ? "Prijavite se da uredite" : undefined}
-                    >
-                      <Pencil className="h-4 w-4 mr-1" /> Uredi
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      className="hover:bg-red-600"
-                      onClick={() => setToDelete(a)}
-                      disabled={!token || (deleting && toDelete?.id === a.id)}
-                      title={!token ? "Prijavite se da obrišete" : undefined}
-                    >
-                      <Trash className="h-4 w-4 mr-1" />
-                      {deleting && toDelete?.id === a.id
-                        ? "Brisanje..."
-                        : "Obriši"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="hover:bg-gray-100"
-                      onClick={() => alert(JSON.stringify(a, null, 2))}
-                    >
-                      <Eye className="h-4 w-4 mr-1" /> Pregledaj
-                    </Button>
-                  </div>
-                </td>
+      <div className="rounded-xl border bg-white shadow-sm">
+        <div className="overflow-x-auto rounded-xl">
+          <table className="min-w-full text-[13px] table-fixed">
+            <thead>
+              <tr className="border-b bg-gray-50">
+                <th className={TH}>Dobavljač</th>
+                <th className={TH}>Prevoznik</th>
+                <th className={TH}>Tablice</th>
+                <th className={TH}>Status</th>
+                <th className="px-3 py-2 text-right font-semibold text-gray-700">Akcije</th>
               </tr>
-            ))}
+            </thead>
+            <tbody className="[&amp;>tr:nth-child(even)]:bg-slate-50/50">
+              {items.map((a) => (
+                <tr
+                  key={a.id}
+                  className="border-b last:border-0 hover:bg-gray-100 transition-colors"
+                >
+                  <td className={TD}>{a.supplier}</td>
+                  <td className={TD}>{a.carrier}</td>
+                  <td className={TD}>{a.plate}</td>
+                  <td className={TD}>{a.status}</td>
+                  <td className="px-3 py-2 text-right">
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="hover:bg-gray-100"
+                        onClick={() => setEditItem(a)}
+                        disabled={!token}
+                        title={!token ? "Prijavite se da uredite" : undefined}
+                      >
+                        <Pencil className="h-4 w-4 mr-1" /> Uredi
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="hover:bg-red-600"
+                        onClick={() => setToDelete(a)}
+                        disabled={!token || (deleting && toDelete?.id === a.id)}
+                        title={!token ? "Prijavite se da obrišete" : undefined}
+                      >
+                        <Trash className="h-4 w-4 mr-1" />
+                        {deleting && toDelete?.id === a.id
+                          ? "Brisanje..."
+                          : "Obriši"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="hover:bg-gray-100"
+                        onClick={() => alert(JSON.stringify(a, null, 2))}
+                      >
+                        <Eye className="h-4 w-4 mr-1" /> Pregledaj
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
 
-            {loading && (
-              <tr>
-                <td className="p-6 text-center text-muted-foreground" colSpan={5}>
-                  Učitavanje...
-                </td>
-              </tr>
-            )}
+              {loading && (
+                <tr>
+                  <td className="p-6 text-center text-muted-foreground" colSpan={5}>
+                    Učitavanje...
+                  </td>
+                </tr>
+              )}
 
-            {!loading && items.length === 0 && (
-              <tr>
-                <td className="p-6 text-center text-muted-foreground" colSpan={5}>
-                  Nema podataka.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              {!loading && items.length === 0 && (
+                <tr>
+                  <td className="p-6 text-center text-muted-foreground" colSpan={5}>
+                    Nema podataka.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Create */}
