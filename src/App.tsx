@@ -20,8 +20,8 @@ export default function App() {
           setLoading(false);
           return;
         }
-        const me = await apiGET<User>("/me", true);
-        setUser(me);
+        const me = await apiGET<{ user: User }>("/auth/me", true);
+        setUser(me.user);
       } catch (e: any) {
         setErr(null); // token nevažeći – ne smaramo porukom, samo pokaži login
         setToken(null);
@@ -55,14 +55,19 @@ function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
     setBusy(true);
     setErr(null);
     try {
-      // očekuje se da backend vrati { token, user }
-      const res = await apiPOST<{ token: string; user: User }>(
-        "/login",
+      // backend vraća { access_token, user? }
+      const res = await apiPOST<{ access_token: string; user?: User }>(
+        "/auth/login",
         { email, password },
         { auth: false }
       );
-      setToken(res.token);
-      onLoggedIn(res.user);
+      setToken(res.access_token);
+      if (res.user) {
+        onLoggedIn(res.user);
+      } else {
+        const me = await apiGET<{ user: import("./types").User }>("/auth/me", true);
+        onLoggedIn(me.user);
+      }
     } catch (e: any) {
       setErr(e.message || "Prijava nije uspjela");
     } finally {

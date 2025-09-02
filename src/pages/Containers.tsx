@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { listContainers, createContainer, updateContainer, deleteContainer, type Container } from "../lib/api";
+import { listContainers, createContainer, deleteContainer, type Container } from "../lib/api";
 
 /**
  * Base URL for the backend API (falls back to localhost if the Vite env var is missing)
@@ -96,7 +96,15 @@ export default function ContainersPage() {
       });
       if (!res.ok) throw new Error(`List files failed: ${res.status}`);
       const data = await res.json();
-      setFilesList(Array.isArray(data) ? data : data.files || []);
+      const raw: any[] = Array.isArray(data) ? data : data.files || [];
+      const items: FileMeta[] = raw.map((it: any) => ({
+        id: Number(it.id),
+        filename: String(it.filename || it.name || `file-${it.id}`),
+        size: typeof it.size === "number" ? it.size : undefined,
+        created_at: it.created_at || it.createdAt,
+        url: it.url || `${API_BASE}/api/containers/${containerId}/files/${it.id}`,
+      }));
+      setFilesList(items);
     } catch (err) {
       console.error(err);
       alert("Ne mogu učitati fajlove za ovaj kontejner.");
@@ -379,6 +387,7 @@ export default function ContainersPage() {
                     <input
                       type="file"
                       multiple
+                      accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt"
                       style={{ display: "none" }}
                       ref={(el) => (fileInputsRef.current[r.id] = el)}
                       onChange={(e) => uploadFiles(r.id, e.target.files)}
@@ -459,11 +468,18 @@ export default function ContainersPage() {
                         }}
                       >
                         <a
-                          href="#"
+                          href={f.url || `${API_BASE}/api/containers/${filesModalId ?? 0}/files/${f.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
                           onClick={(e) => {
+                            // keep inline preview behavior too
                             e.preventDefault();
                             if (f.url) {
                               setPreviewUrl(f.url);
+                              setPreviewName(f.filename);
+                            } else {
+                              const url = `${API_BASE}/api/containers/${filesModalId ?? 0}/files/${f.id}`;
+                              setPreviewUrl(url);
                               setPreviewName(f.filename);
                             }
                           }}

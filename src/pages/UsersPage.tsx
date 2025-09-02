@@ -1,15 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { apiGET, apiPOST, apiPATCH, apiDELETE } from '../api/client';
+import styles from '../styles';
 
-// Simple User type for UI
-type Role = 'admin' | 'planer' | 'proizvodnja' | 'transport' | 'carina';
-export type User = {
-  id: number;
-  name: string;
-  email: string;
-  role: Role;
-};
-
-const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:8081';
+// Roles aligned with backend + UI
+export type Role = 'admin' | 'planer' | 'proizvodnja' | 'transport' | 'carina' | 'viewer';
+export type User = { id: number; name: string; email: string; role: Role };
 
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -17,31 +12,17 @@ export default function UsersPage() {
   const [error, setError] = useState<string | null>(null);
 
   // form state
-  const emptyForm: Omit<User, 'id'> & { password?: string } = useMemo(
-    () => ({ name: '', email: '', role: 'planer', password: '' }),
-    []
-  );
-  const [form, setForm] = useState<Omit<User, 'id'> & { password?: string }>(emptyForm);
+  const emptyForm = useMemo(() => ({ name: '', email: '', role: 'planer' as Role, password: '' }), []);
+  const [form, setForm] = useState<{ name: string; email: string; role: Role; password?: string }>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-
-  const authHeaders: HeadersInit = useMemo(
-    () => ({
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    }),
-    [token]
-  );
-
   async function loadUsers() {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
-      const res = await fetch(`${API_BASE}/users`, { headers: authHeaders });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setUsers(data);
+      // NOTE: backend exposes /users (no /api prefix)
+      const data = await apiGET<User[]>('/users', true);
+      setUsers(Array.isArray(data) ? data : []);
     } catch (e: any) {
       setError(e.message || 'Greška pri učitavanju korisnika');
     } finally {
@@ -49,10 +30,7 @@ export default function UsersPage() {
     }
   }
 
-  useEffect(() => {
-    loadUsers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { loadUsers(); }, []);
 
   function resetForm() {
     setForm(emptyForm);
@@ -69,21 +47,11 @@ export default function UsersPage() {
     try {
       setError(null);
       if (editingId) {
-        // update
-        const res = await fetch(`${API_BASE}/users/${editingId}`, {
-          method: 'PATCH',
-          headers: authHeaders,
-          body: JSON.stringify({ name: form.name, email: form.email, role: form.role, password: form.password || undefined }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body: any = { name: form.name, email: form.email, role: form.role };
+        if (form.password) body.password = form.password;
+        await apiPATCH<User>(`/users/${editingId}`, body, true);
       } else {
-        // create
-        const res = await fetch(`${API_BASE}/users`, {
-          method: 'POST',
-          headers: authHeaders,
-          body: JSON.stringify(form),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await apiPOST<User>('/users', form, { auth: true });
       }
       await loadUsers();
       resetForm();
@@ -96,11 +64,7 @@ export default function UsersPage() {
   async function onDelete(id: number) {
     if (!confirm('Obrisati korisnika?')) return;
     try {
-      const res = await fetch(`${API_BASE}/users/${id}`, {
-        method: 'DELETE',
-        headers: authHeaders,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await apiDELETE<{ ok: boolean }>(`/users/${id}`, true);
       setUsers(prev => prev.filter(u => u.id !== id));
     } catch (e: any) {
       alert(`Brisanje nije uspjelo: ${e.message || 'nepoznato'}`);
@@ -200,6 +164,7 @@ export default function UsersPage() {
             <option value="proizvodnja">proizvodnja</option>
             <option value="transport">transport</option>
             <option value="carina">carina</option>
+            <option value="viewer">viewer</option>
           </select>
         </label>
 
