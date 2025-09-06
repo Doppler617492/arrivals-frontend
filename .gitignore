@@ -1,0 +1,23 @@
+# Node / Frontend
+node_modules/
+dist/
+build/
+.vite/
+.next/
+*.log
+
+# Python / Backend
+.venv/
+__pycache__/
+*.pyc
+
+# Env / OS / IDE
+.env
+.env.*
+.DS_Store
+.vscode/
+.idea/
+
+# Docker
+*.local.yml
+**/tmp/
