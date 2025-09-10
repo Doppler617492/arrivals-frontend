@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { Arrival } from "../lib/api";
 
+type ArrivalWithFiles = Partial<Arrival> & { _files?: File[] };
+
 type Props = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -50,6 +52,7 @@ export default function ArrivalFormDialog({
     ...initial,
   });
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+  const [files, setFiles] = React.useState<File[]>([]);
 
   const initialKey = React.useMemo(() => JSON.stringify(initial ?? {}), [initial]);
 
@@ -63,6 +66,7 @@ export default function ArrivalFormDialog({
       return same ? prev : next;
     });
     setErrors({});
+    setFiles([]);
   }, [open, initialKey]);
 
   const update =
@@ -88,7 +92,7 @@ export default function ArrivalFormDialog({
 
   const handleSubmit = async () => {
     if (!validate()) return;
-    const payload: Partial<Arrival> = {
+    const payload: ArrivalWithFiles = {
       ...form,
       supplier: (form.supplier ?? "").toString().trim(),
       plate: (form.plate ?? "").toString().trim(),
@@ -98,6 +102,9 @@ export default function ArrivalFormDialog({
       status: (form.status ?? "announced").toString().trim(),
       eta: (form.eta ?? "").toString().trim() || undefined,
     };
+    if (files.length) {
+      payload._files = files;
+    }
     await onSubmit(payload);
     onOpenChange(false);
   };
@@ -202,13 +209,32 @@ export default function ArrivalFormDialog({
               className="min-h-[88px] rounded-md border px-3 py-2 text-sm"
             />
           </div>
+
+          <div className="grid gap-1">
+            <Label>Prilozi (opcionalno)</Label>
+            <input
+              type="file"
+              multiple
+              onChange={(e) => {
+                const list = e.currentTarget.files ? Array.from(e.currentTarget.files) : [];
+                setFiles(list);
+              }}
+              className="block w-full text-sm file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
+              accept=".pdf,.jpg,.jpeg,.png,.heic,.xlsx,.xls,.csv,.txt,.doc,.docx"
+            />
+            {files.length > 0 && (
+              <span className="text-xs text-muted-foreground">
+                Odabrano fajlova: {files.length}
+              </span>
+            )}
+          </div>
         </div>
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             Otkaži
           </Button>
-          <Button onClick={handleSubmit} disabled={submitting} type="button">
+          <Button onClick={handleSubmit} disabled={submitting} type="button" data-has-files={files.length > 0}>
             {submitting ? "Snimam..." : "Sačuvaj"}
           </Button>
         </DialogFooter>

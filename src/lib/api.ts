@@ -1,6 +1,6 @@
 // Centralized API client + shared types for the Arrivals app.
 // It covers auth, arrivals CRUD, bulk ops, activity, uploads, exports and email.
-// 
+//
 // Table cell utility classes for rendering Arrivals:
 // - Use "px-2 py-1" for all <td>
 // - ID column: <td className="px-2 py-1 text-xs text-gray-400 text-center">{arrival.id}</td>
@@ -26,23 +26,35 @@ export type LoginResponse = {
 
 export type CreateArrivalInput = {
   supplier: string;
+  carrier: string;
+  driver: string;
   plate: string;
-  type: "truck" | "container" | "van" | "other";
-  carrier?: string;
+  pickup_date: string;
+  eta: string;
+  transport_type: "truck" | "container" | "van" | "train";
+  status?: "not_shipped" | "shipped" | "arrived";
+  goods_cost: number;
+  freight_cost: number;
+  location: string;
   note?: string;
-  status?: "announced" | "arrived" | "delayed" | "cancelled";
 };
 
 export type Arrival = Record<string, any> & {
-  id?: ID;
-  supplier?: string;
-  plate?: string;
-  type?: string;
-  carrier?: string | null;
+  id: ID;
+  supplier: string;
+  carrier: string;
+  driver: string;
+  plate: string;
+  pickup_date: string;
+  eta: string;
+  arrived_at?: string | null;
+  transport_type: "truck" | "container" | "van" | "train";
+  status: "not_shipped" | "shipped" | "arrived";
+  goods_cost: number;
+  freight_cost: number;
+  location: string;
   note?: string | null;
-  status?: string;
-  created_at?: string;
-  eta?: string | null;
+  files: string[];
 };
 
 // Containers (kontejneri)
@@ -236,6 +248,7 @@ export const api = {
       .then((data) => ({ ok: true, data }))
       .catch((error) => ({ ok: false, error: (error as Error).message })),
 
+  // ----- Arrivals -----
   listArrivals: () =>
     http<Arrival[]>(`/api/arrivals`)
       .then(data => data ?? [])
@@ -387,16 +400,93 @@ export const api = {
       .then(data => ({ ok: true, data }))
       .catch(error => ({ ok: false, error: (error as Error).message })),
 
+  // ----- Header helpers (NEW) -----
+  searchContainers: async (query: string) => {
+    // 1) Try dedicated search endpoint
+    try {
+      const r = await http<Container[]>(`/api/containers/search?q=${encodeURIComponent(query)}`);
+      return r ?? [];
+    } catch {
+      // 2) fallback: filter client-side
+      try {
+        const all = await http<Container[]>(`/api/containers`);
+        const q = query.toLowerCase();
+        return (all ?? []).filter(r => {
+          const vals = [
+            r.id, r.container_no, r.supplier, r.proforma, r.agent, r.eta, r.etd, r.delivery
+          ].filter(Boolean).map(String);
+          return vals.some(v => v.toLowerCase().includes(q));
+        });
+      } catch {
+        return [];
+      }
+    }
+  },
+
+  getNotifications: async (): Promise<Array<{id:number;text:string;read?:boolean}>> => {
+    try {
+      return await http<Array<{id:number;text:string;read?:boolean}>>(`/api/notifications`);
+    } catch {
+      // fallback demo data
+      return [
+        { id: 1, text: "Nova pošiljka je stigla (CN-123)", read: false },
+        { id: 2, text: "Dug je plaćen (INV-4578)", read: false },
+        { id: 3, text: "ETA promijenjen za CN-987", read: true },
+      ];
+    }
+  },
+
+  // ----- Settings & Account (compat) -----
+  // These helpers try modern "/api/..." endpoints first and gracefully fall back
+  // to legacy non-prefixed routes used by the older backend ("/general", "/me", 
+  // "/notifications", "/sessions"). This avoids 401/405 noise when the
+  // frontend and backend are slightly out of sync.
+
+  // General (system) settings
+  _getGeneral: async (): Promise<Record<string, any>> => {
+    // Try modern route
+    try { return await http<Record<string, any>>(`/api/general`); } catch {}
+    // Fallback legacy route
+    return await http<Record<string, any>>(`/general`);
+  },
+  _saveGeneral: async (payload: Record<string, any>): Promise<{ ok: boolean } & { data?: any; error?: string }> => {
+    // Prefer PATCH on modern API, then POST, then legacy POST.
+    try { const d = await http<any>(`/api/general`, { method: "PATCH", body: JSON.stringify(payload) }); return { ok: true, data: d }; } catch {}
+    try { const d = await http<any>(`/api/general`, { method: "POST", body: JSON.stringify(payload) }); return { ok: true, data: d }; } catch {}
+    try { const d = await http<any>(`/general`, { method: "POST", body: JSON.stringify(payload) }); return { ok: true, data: d }; } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
+  },
+
+  // Current user (account/me)
+  meCompat: async (): Promise<User | null> => {
+    try { return await http<User>(`/auth/me`); } catch {}
+    try { return await http<User>(`/me`); } catch { return null; }
+  },
+
+  // Active sessions list (for Security settings)
+  listSessions: async (): Promise<Array<{ id: ID; ip?: string; ua?: string; last_seen?: string }>> => {
+    try { return await http<Array<{ id: ID; ip?: string; ua?: string; last_seen?: string }>>(`/api/sessions`); } catch {}
+    try { return await http<Array<{ id: ID; ip?: string; ua?: string; last_seen?: string }>>(`/sessions`); } catch { return []; }
+  },
+
+  // Notifications (compat wrapper used by Settings)
+  getNotificationsCompat: async (): Promise<Array<{id:number;text:string;read?:boolean}>> => {
+    try { return await http<Array<{id:number;text:string;read?:boolean}>>(`/api/notifications`); } catch {}
+    try { return await http<Array<{id:number;text:string;read?:boolean}>>(`/notifications`); } catch { return []; }
+  },
+
   // ----- Health -----
   health: () =>
     http<{ ok: boolean }>(`/health`)
       .then(data => ({ ok: true, data }))
       .catch(error => ({ ok: false, error: (error as Error).message })),
-  
 };
+
 // Containers export
 export const containersExport = (format: "csv" | "xlsx" | "pdf", ids?: ID[]) =>
   httpBlob(`/api/containers/export/${format}${ids?.length ? `?ids=${encodeURIComponent(ids.join(","))}` : ""}`);
+
 // ---- Compatibility shim: some modules import { deleteContainer } directly ----
 export async function deleteContainer(id: ID) {
   return api.deleteContainer(id);

@@ -1,7 +1,6 @@
 
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
-import * as path from "node:path";
 
 // ❗️DEV NOTE
 // Koristimo apsolutni API origin iz .env(.local) preko VITE_API_BASE
@@ -9,21 +8,38 @@ import * as path from "node:path";
 // situaciju da navigacija na /auth/* završi na backendu (405),
 // a same XHR/fetch pozive rješava apsolutni URL iz client.ts.
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), "");
+  const env = loadEnv(mode, new URL(".", import.meta.url).pathname, "");
   const API_ORIGIN = env.VITE_API_BASE || "http://localhost:8081";
 
   return {
     plugins: [react()],
     resolve: {
-      alias: { "@": path.resolve(__dirname, "./src") },
+      alias: { "@": new URL("./src", import.meta.url).pathname },
     },
     server: {
       // Front je samo SPA dev server; API ide direktno na API_ORIGIN preko fetch-a
       port: 5173,
-      host: "127.0.0.1",
+      host: true,
       cors: true,
       hmr: { overlay: true },
-      // NEMA proxy-ja namjerno
+      proxy: {
+        "/api": {
+          target: "http://localhost:8081",
+          changeOrigin: true,
+        },
+        "/auth": {
+          target: "http://localhost:8081",
+          changeOrigin: true,
+        },
+        "/files": {
+          target: "http://localhost:8081",
+          changeOrigin: true,
+        },
+        "/notifications": {
+          target: "http://localhost:8081",
+          changeOrigin: true,
+        },
+      },
     },
     preview: {
       port: 4173,

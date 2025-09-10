@@ -32,9 +32,8 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
   };
 
   return (
-    <div className="login-container">
-      <div style={styles.centeredPage}>
-        <style>{`
+    <div className="login-screen" style={styles.fullscreen}>
+      <style>{`
           @keyframes floaty {
             0% { transform: translateY(0px); opacity: .9; }
             50% { transform: translateY(-8px); opacity: 1; }
@@ -55,10 +54,10 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
             max-width: 92vw;
             position: relative;
             padding: 22px 20px 20px 20px;
-            border-radius: 16px;
+            border-radius: 12px;
             border: 1px solid rgba(255,255,255,0.35);
             background: rgba(255,255,255,0.72);
-            box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255,255,255,0.4);
+            box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255,255,255,0.4), 0 12px 28px rgba(0,0,0,0.15);
             backdrop-filter: blur(10px);
           }
           .brand { display:flex; align-items:center; gap:12px; margin-bottom: 6px; }
@@ -71,7 +70,7 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
           .inputx {
             width: 100%;
             padding: 12px 14px;
-            border-radius: 10px;
+            border-radius: 12px;
             border: 1px solid rgba(0,0,0,0.12);
             background: #fff;
             color: #0b1220;
@@ -79,59 +78,109 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
             transition: box-shadow .2s ease, transform .05s ease, border-color .2s ease;
           }
           .inputx:focus { box-shadow: 0 0 0 4px rgba(94,128,255,0.15); border-color: rgba(94,128,255,0.55); }
+          .input-wrap { position: relative; }
+          .input-ico { position:absolute; top:50%; left:12px; transform:translateY(-50%); width:16px; height:16px; opacity:.7; pointer-events:none; }
+          .inputx.with-ico { padding-left: 38px; }
           .primaryx {
             width: 100%;
             padding: 12px 14px;
-            border-radius: 10px;
+            border-radius: 12px;
             border: 1px solid rgba(94,128,255,0.4);
             background: linear-gradient(180deg,#5e80ff,#3f5ae0);
             color: #fff;
             font-weight: 600;
             cursor: pointer;
           }
+          .primaryx:hover { filter: brightness(1.05); }
+          .links-row { display:flex; justify-content:space-between; align-items:center; margin-top: 2px; }
+          .linkx { color:#2563eb; text-decoration:none; font-size:12px; }
+          .linkx:hover { text-decoration:underline; }
           .footer-note { margin-top: 10px; font-size: 12px; opacity: .65; text-align: center; }
           .divider { height:1px; background: linear-gradient(90deg, rgba(0,0,0,0.06), rgba(0,0,0,0.12), rgba(0,0,0,0.06));
             margin: 4px 0 12px 0; border-radius: 999px; }
-        `}</style>
-
-        <div className="login-bg" />
-
-        <form onSubmit={submit} className="glass" aria-label="Prijava na sistem">
-          <div className="brand">
-            <img src="/logo-cungu.png" alt="Cungu logo" className="brand-logo" />
-            <div>
-              <h2 className="brand-title">Arrivals</h2>
-              <div className="brand-sub">Prijava na sistem</div>
-            </div>
+          /* ---- Safari / macOS: blur i opacity korekcije ---- */
+          .glass { backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+          @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+            /* Fallback kad blur nije podržan: čvršća pozadina */
+            .glass { background: #ffffff; }
+          }
+          /* Manje agresivan blur na mobilnim uređajima */
+          @media (max-width: 420px) {
+            .login-bg { filter: blur(36px); }
+          }
+          /* Prefer-reduced-motion: isključi animaciju pozadine */
+          @media (prefers-reduced-motion: reduce) {
+            .login-bg { animation: none !important; }
+          }
+          /* ---- Mini responsive dorada za male ekrane ---- */
+          @media (max-width: 420px) {
+            .glass {
+              width: 94vw;
+              padding: 18px 16px;
+              border-radius: 10px;
+              box-shadow: 0 12px 34px rgba(15,23,42,0.16), inset 0 1px 0 rgba(255,255,255,0.45);
+            }
+            .brand { gap: 10px; }
+            .brand-logo { width: 36px; height: 36px; border-radius: 8px; }
+            .brand-title { font-size: 18px; }
+            .brand-sub { font-size: 12px; margin-top: 0; }
+            .form-grid { gap: 8px; }
+            .inputx { padding: 11px 12px; border-radius: 10px; }
+            .inputx.with-ico { padding-left: 36px; }
+            .primaryx { padding: 11px 12px; border-radius: 10px; }
+            .links-row { flex-direction: column; gap: 6px; align-items: flex-start; }
+            .footer-note { font-size: 11px; }
+          }
+      `}</style>
+      <div className="login-bg" />
+      <form onSubmit={submit} className="glass" aria-label="Prijava na sistem">
+        <div className="brand">
+          <img src="/logo.svg" alt="Arrivals logo" className="brand-logo" onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/logo-cungu.png'; }} />
+          <div>
+            <h2 className="brand-title">Arrivals</h2>
+            <div className="brand-sub">Prijava na sistem</div>
           </div>
+        </div>
 
-          <div className="divider" />
-          <div className="form-grid">
-            <div className="field">
-              <label className="label" htmlFor="login-email">Email</label>
-              <input id="login-email" className="inputx" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@firma.com" type="email" autoComplete="username" required autoFocus disabled={loading} />
-            </div>
-            <div className="field">
-              <label className="label" htmlFor="login-pass">Lozinka</label>
-              <input id="login-pass" className="inputx" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="lozinka" autoComplete="current-password" required disabled={loading} />
-            </div>
-            {err && <div style={styles.error} role="alert" aria-live="polite">{err}</div>}
-            <button disabled={loading} className="primaryx" type="submit">{loading ? "Učitavam..." : "Uloguj se"}</button>
-            <div className="footer-note">© {new Date().getFullYear()} Cungu • Created by Atdhe Tabaku</div>
+        <div className="divider" />
+        <div className="form-grid">
+          <div className="input-wrap">
+            <svg className="input-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M4 4h16v16H4z" strokeWidth="1.5" opacity=".15"></path>
+              <path d="M4 7l8 6 8-6" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"></path>
+            </svg>
+            <input id="login-email" className="inputx with-ico" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Vaša email adresa" type="email" autoComplete="username" required autoFocus disabled={loading} aria-label="Email" />
           </div>
-        </form>
-      </div>
+          <div className="input-wrap">
+            <svg className="input-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <rect x="5" y="11" width="14" height="8" rx="2" strokeWidth="1.8"></rect>
+              <path d="M12 11V7a4 4 0 0 1 4-4" strokeWidth="1.8" strokeLinecap="round"></path>
+            </svg>
+            <input id="login-pass" className="inputx with-ico" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Vaša lozinka" autoComplete="current-password" required disabled={loading} aria-label="Lozinka" />
+          </div>
+          <div className="links-row">
+            <a className="linkx" href="/forgot">Zaboravljena lozinka?</a>
+            <span style={{fontSize:12, opacity:.75}}>
+              Nemate nalog? <a className="linkx" href="/register">Registrujte se</a>
+            </span>
+          </div>
+          {err && <div style={styles.error} role="alert" aria-live="polite">{err}</div>}
+          <button disabled={loading} className="primaryx" type="submit">{loading ? "Učitavam..." : "Uloguj se"}</button>
+          <div className="footer-note">© {new Date().getFullYear()} Cungu • Created by Atdhe Tabaku</div>
+        </div>
+      </form>
     </div>
   );
 }
 const styles = {
-  centeredPage: {
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    minHeight: "100vh",
-    background: "#f8fafc",
+  fullscreen: {
+    position: "fixed",
+    inset: 0,
+    display: "grid",
+    placeItems: "center",
+    background: "#f1f5f9",
     padding: "24px",
+    zIndex: 50
   } as React.CSSProperties,
   error: {
     color: "#b91c1c",

@@ -541,3 +541,115 @@ input[type=number]::-webkit-outer-spin-button {
 input[type=number] {
   -moz-appearance: textfield;
 }
+
+/* ======= Header (global top nav) ======= */
+.hdr {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: 1fr 620px auto;
+  align-items: center;
+  gap: 16px;
+  background: #fff;
+  padding: 10px 16px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+  border-bottom: 1px solid #eef1f6;
+}
+.hdr__brand { display:flex; align-items:center; gap:10px; text-decoration:none; color:inherit; }
+.hdr__logo { width:28px; height:28px; object-fit:contain; }
+.hdr__logo--fallback { width:28px; height:28px; display:grid; place-items:center; border-radius:6px; font-weight:700; background:#f1f5f9; color:#0f172a; }
+.hdr__title { font-weight:700; letter-spacing:.2px; }
+
+.hdr__search {
+  position: relative;
+  display: flex; align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 8px 12px;
+  transition: all .15s ease;
+}
+.hdr__search.is-focused { background:#fff; border-color:#cfd6e4; box-shadow: 0 0 0 4px rgba(37,99,235,0.08); }
+.hdr__searchIcon { margin-right: 8px; opacity:.75; }
+.hdr__searchInput {
+  flex: 1; border: none; background: transparent; outline: none;
+  font-size: 14px;
+}
+.hdr__searchDropdown {
+  position: absolute; top: 44px; left: 0; right: 0;
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.08);
+  overflow: hidden;
+}
+.hdr__searchItem {
+  display:block; padding:10px 12px; text-decoration:none; color:#0f172a;
+  border-bottom: 1px solid #f2f4f8;
+}
+.hdr__searchItem:hover { background:#f8fafc; }
+.hdr__searchPrim { font-weight:600; }
+.hdr__searchSec { font-size:12px; color:#64748b; }
+
+.hdr__right { display:flex; align-items:center; gap:10px; }
+.icon-btn {
+  position: relative;
+  background:#fff; border:1px solid #e5e7eb; border-radius: 12px;
+  padding:8px 10px; cursor:pointer;
+}
+.icon-btn:hover { border-color:#cfd6e4; }
+
+/* Make sure header icon buttons always render visible icons */
+.icon-btn{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:32px; height:32px; border-radius:12px; color:#0f172a;
+}
+.icon-btn svg{
+  display:block; width:18px; height:18px; stroke:currentColor;
+}
+/* Fallback icons (if SVG fails or isn't mounted) using public SVGs */
+.icon-btn::before{
+  content:""; display:block; width:18px; height:18px; background-repeat:no-repeat; background-size:contain;
+  filter: none; opacity: .95;
+}
+/* Map by title so we don't need extra classes */
+.icon-btn[title="Obavijesti"]::before{ background-image:url("/notification.svg"); }
+.icon-btn[title="Novi unos"]::before{ background-image:url("/new.svg"); }
+/* If an SVG is present, hide the fallback */
+.icon-btn:has(svg)::before{ display:none; }
+
+/* IMPORTANT:
+   We already have a global .badge class in this file for status pills.
+   To avoid breaking it, we scope the notification badge styling to header icons only.
+*/
+.hdr__iconBtn .badge {
+  position:absolute; top:-6px; right:-6px;
+  background:#ef4444; color:#fff; font-size:10px; line-height: 1;
+  padding:3px 6px; border-radius:999px; border:2px solid #fff;
+  display:inline-block; /* override inline-flex from global pill badge */
+}
+
+.user-btn {
+  display:flex; align-items:center; gap:8px;
+  background:#fff; border:1px solid #e5e7eb; border-radius: 999px;
+  padding: 4px 6px; cursor:pointer;
+}
+.user-btn img { width:24px; height:24px; border-radius:999px; display:block; }
+.user-initials {
+  width:24px; height:24px; border-radius:999px; background:#e5e7eb;
+  display:flex; align-items:center; justify-content:center; font-weight:700; color:#334155;
+}
+
+.dropdown {
+  position:absolute; right:0; top:42px;
+  width:280px; background:#fff; border:1px solid #e5e7eb; border-radius:12px;
+  box-shadow:0 12px 28px rgba(0,0,0,.08); overflow:hidden;
+}
+.dropdown__head { font-weight:700; padding:10px 12px; border-bottom:1px solid #f2f4f8; }
+.dropdown__empty { padding:12px; color:#64748b; }
+.dropdown__list { list-style:none; padding:0; margin:0; max-height:260px; overflow:auto; }
+.dropdown__item { padding:10px 12px; border-bottom:1px solid #f2f4f8; }
+.dropdown__item.unread { background:#f8fafc; }
+.dropdown__foot { padding:8px 12px; display:flex; justify-content:flex-end; }
+.hdr__iconBtn { position: relative; }
+.hdr__notif .dropdown { right: -8px; }
+.hdr__user .dropdown { right: -2px; }

@@ -303,13 +303,15 @@ export default function ArrivalsTable() {
               Ova akcija je trajna. Obriši #{toDelete?.id}?
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2">
+          <DialogFooter>
+            <div className="flex gap-2">
             <Button variant="outline" onClick={() => setToDelete(null)} disabled={deleting}>
               Odustani
             </Button>
             <Button variant="destructive" onClick={confirmDelete} disabled={deleting}>
               {deleting ? "Brisanje..." : "Da, obriši"}
             </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

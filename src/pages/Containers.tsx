@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import React from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 
 /* =========================
@@ -98,20 +99,6 @@ function encodeForm(obj: Record<string, any>) {
   return usp.toString();
 }
 
-// Try a list of candidate payloads for PATCH/PUT/POST by delegating to updateContainerWithFallbacks
-async function patchAny(id: number, candidates: Record<string, any>[]) {
-  let lastErr: any = null;
-  for (const body of candidates) {
-    try {
-      await updateContainerWithFallbacks(id, body);
-      return;
-    } catch (e) {
-      lastErr = e;
-      continue;
-    }
-  }
-  if (lastErr) throw lastErr;
-}
 async function updateContainerWithFallbacks(id: number, payload: Record<string, any>) {
   const tries = [
     { url: `${API_BASE}/api/containers/${id}`, method: "PATCH", type: "json", body: payload },
@@ -153,120 +140,6 @@ async function updateContainerWithFallbacks(id: number, payload: Record<string, 
   throw lastErr || new Error("All update attempts failed");
 }
 
-// --- New helper for paid toggle, robust to many backend variants ---
-async function updatePaidAny(row: Container, nextPaid: boolean) {
-  // Build a "full" object (some backends require full resource payloads)
-  const fullObj: Record<string, any> = { ...row, paid: !!nextPaid };
-  // Normalize nullable/undefineds for stricter backends
-  Object.keys(fullObj).forEach((k) => {
-    if (fullObj[k as keyof typeof fullObj] === undefined) fullObj[k as keyof typeof fullObj] = null;
-  });
-
-  // Prepare common bodies with different field spellings / encodings
-  const valBool = !!nextPaid;
-  const valNum = nextPaid ? 1 : 0;
-  const valStr = nextPaid ? "true" : "false";
-  const valPaidTxt = nextPaid ? "paid" : "unpaid";
-  const valLocalTxt = nextPaid ? "plaćeno" : "nije plaćeno";
-
-  const bodies: Record<string, any>[] = [
-    { paid: valBool },
-    { paid: valNum },
-    { paid: valStr },
-    { is_paid: valNum },
-    { isPaid: valBool },
-    { payment: valNum },
-    { paymentStatus: valPaidTxt },
-    { payment_status: valPaidTxt },
-    { payment_status: valNum },
-    { status: valLocalTxt },
-  ];
-
-  // Try a wide range of endpoints / verbs / encodings, including overrides and action-like routes
-  const variants: { url: string; method: string; type: "json" | "form" | "json-override"; body: Record<string, any> }[] = [];
-
-  const resourceUrl = `${API_BASE}/api/containers/${row.id}`;
-  const collUrl = `${API_BASE}/api/containers`;
-  const actionUrls = [
-    `${API_BASE}/api/containers/${row.id}/paid`,
-    `${API_BASE}/api/containers/${row.id}/pay`,
-    `${API_BASE}/api/containers/${row.id}/status`,
-    `${API_BASE}/api/containers/${row.id}/toggle_paid`,
-  ];
-
-  // Minimal bodies
-  for (const b of bodies) {
-    variants.push({ url: resourceUrl, method: "PATCH", type: "json", body: b });
-    variants.push({ url: resourceUrl, method: "PUT",   type: "json", body: b });
-    variants.push({ url: resourceUrl, method: "POST",  type: "json", body: b });
-    variants.push({ url: resourceUrl, method: "POST",  type: "form", body: b });
-  }
-
-  // Collection endpoints with id in body
-  for (const b of bodies) {
-    variants.push({ url: collUrl, method: "PATCH", type: "json", body: { id: row.id, ...b } });
-    variants.push({ url: collUrl, method: "POST",  type: "json", body: { id: row.id, ...b } });
-    variants.push({ url: collUrl, method: "POST",  type: "form", body: { id: row.id, ...b } });
-  }
-
-  // Full object (some backends require full payloads)
-  variants.push({ url: resourceUrl, method: "PUT",   type: "json", body: fullObj });
-  variants.push({ url: resourceUrl, method: "POST",  type: "json", body: fullObj });
-
-  // Action-like endpoints
-  for (const u of actionUrls) {
-    for (const b of bodies) {
-      variants.push({ url: u, method: "POST", type: "json", body: b });
-      variants.push({ url: u, method: "POST", type: "form", body: b });
-    }
-  }
-
-  // Method override variant
-  variants.push({ url: resourceUrl, method: "POST", type: "json-override", body: { paid: valBool } });
-
-  let lastErr: any = null;
-  for (const v of variants) {
-    try {
-      const headers: Record<string, string> = {
-        Accept: "application/json,text/plain;q=0.9,*/*;q=0.8",
-        ...authHeaders(),
-      };
-      let body: any;
-      const method = v.method;
-      if (v.type === "json") {
-        headers["Content-Type"] = "application/json";
-        body = JSON.stringify(v.body);
-      } else if (v.type === "form") {
-        headers["Content-Type"] = "application/x-www-form-urlencoded;charset=UTF-8";
-        const usp = new URLSearchParams();
-        Object.entries(v.body).forEach(([k, val]) => usp.append(k, String(val)));
-        body = usp.toString();
-      } else if (v.type === "json-override") {
-        headers["Content-Type"] = "application/json";
-        headers["X-HTTP-Method-Override"] = "PATCH";
-        body = JSON.stringify(v.body);
-      }
-
-      const res = await fetch(v.url, { method, headers, body });
-      const ct = res.headers.get("content-type") || "";
-      const data = ct.includes("application/json") ? await res.json().catch(() => null) : await res.text().catch(() => null);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const badBody = (typeof data === "string" ? data.trim() : "") as string;
-      if (badBody === "403" || badBody === "405") throw new Error(`Body says ${badBody}`);
-      if (data && typeof data === "object" && (data.error || data.errors || data.status === 403 || data.code === 403)) {
-        throw new Error(data.error || JSON.stringify(data.errors) || "403");
-      }
-      return data ?? {};
-    } catch (e) {
-      lastErr = e;
-      // eslint-disable-next-line no-console
-      console.debug("updatePaidAny attempt failed:", v.method, v.url, v.type, e);
-      continue;
-    }
-  }
-  throw lastErr || new Error("All paid update attempts failed");
-}
 
 /* =========================
    Utils
@@ -480,6 +353,8 @@ export default function ContainersPage() {
   const [toggling, setToggling] = useState<Record<number, boolean>>({});
   const [searchText, setSearchText] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // show/hide filters
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(true);
 
   // ---- filters & sorting (page header) ----
   const [filterSupplier, setFilterSupplier] = useState<string>(""); // empty = all
@@ -489,6 +364,34 @@ export default function ContainersPage() {
   const [filterDateField, setFilterDateField] = useState<"eta" | "etd" | "delivery">("eta");
   const [sortBy, setSortBy] = useState<"id" | "supplier" | "eta" | "etd" | "total" | "balance" | "paid">("eta");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // --- pick up global search (?q=...) from URL and apply to table search ---
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    // Read ?q whenever URL changes (e.g., Header navigate or manual edit)
+    const sp = new URLSearchParams(location.search || "");
+    const q = sp.get("q") || "";
+    setSearchText(q);
+  }, [location.search]);
+
+  // --- keep URL ?q in sync when user types locally (shareable links) ---
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const sp = new URLSearchParams(location.search || "");
+      const current = sp.get("q") || "";
+      const next = searchText.trim();
+      // avoid needless navigations / loops
+      if (next === current) return;
+      if (next) sp.set("q", next);
+      else sp.delete("q");
+      navigate({
+        pathname: location.pathname,
+        search: sp.toString() ? `?${sp.toString()}` : "",
+      }, { replace: true });
+    }, 300); // small debounce for nicer UX and fewer history entries
+    return () => clearTimeout(t);
+  }, [searchText, location.pathname, location.search, navigate]);
 
   // unique suppliers for dropdown
   const supplierOptions = React.useMemo(() => {
@@ -559,11 +462,47 @@ export default function ContainersPage() {
             isTruthy((r as any).payment_status) ||
             isTruthy((r as any).status);
 
+          // --- normalize money fields from multiple possible backend keys and encodings ---
+          const num = (v: any) => {
+            if (v === null || v === undefined || v === "") return 0;
+            if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+            const s0 = String(v).trim();
+            // EU: '.' thousands + ',' decimal
+            if (s0.includes(".") && s0.includes(",")) {
+              const s = s0.replace(/\./g, "").replace(/,/g, ".");
+              const n = Number(s);
+              return Number.isFinite(n) ? n : 0;
+            }
+            if (s0.includes(",") && !s0.includes(".")) {
+              const s = s0.replace(/\s/g, "").replace(/,/g, ".");
+              const n = Number(s);
+              return Number.isFinite(n) ? n : 0;
+            }
+            const n = Number(s0.replace(/\s/g, ""));
+            return Number.isFinite(n) ? n : 0;
+          };
+
+          const contain_price =
+            num(r.contain_price ?? r.price ?? (r as any).cijena ?? (r as any)["cijena"] ?? (r as any)["cijena (eur)"] ?? (r as any).contain_price_eur);
+
+          const total =
+            num(r.total ?? (r as any).ukupno ?? (r as any)["total (eur)"] ?? (r as any).total_eur);
+
+          const deposit =
+            num(r.deposit ?? (r as any).depozit ?? (r as any)["depozit (eur)"] ?? (r as any).deposit_eur);
+
+          const balance =
+            num(r.balance ?? (r as any).balans ?? (r as any)["balans (eur)"] ?? (r as any).balance_eur);
+
           return {
             ...r,
             proforma_no,
             container_no,
             cargo_qty,
+            contain_price,
+            total,
+            deposit,
+            balance,
             paid: !!paidBool,
           };
         });
@@ -779,20 +718,40 @@ export default function ContainersPage() {
         alert("CSV import završen.");
         await refresh();
       } else if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
-        // Send to backend for Excel parsing
-        const fd = new FormData();
-        fd.append("file", file, file.name);
-        const res = await fetch(`${API_BASE}/api/containers/import`, {
-          method: "POST",
-          headers: { ...authHeaders() }, // NE postavljati Content-Type, browser će dodati multipart boundary
-          body: fd,
-        });
-        if (!res.ok) {
-          const msg = await res.text().catch(() => "");
-          throw new Error(`Import nije uspio: ${res.status} ${msg}`);
+        // Prefer backend if available; gracefully fall back to client-side SheetJS
+        try {
+          const fd = new FormData();
+          fd.append("file", file, file.name);
+          const res = await fetch(`${API_BASE}/api/containers/import`, {
+            method: "POST",
+            headers: { ...authHeaders() }, // NE postavljati Content-Type, browser dodaje multipart boundary
+            body: fd,
+          });
+
+          if (res.ok) {
+            alert("Excel import poslan serveru i obrađen.");
+            await refresh();
+          } else {
+            // If server says route/method not allowed, try parsing in-browser
+            if (res.status === 405 || res.status === 404) {
+              await importFromXLSX(file);
+              alert("Excel import završen (obrada u pregledaču).");
+              await refresh();
+            } else {
+              const msg = await res.text().catch(() => "");
+              throw new Error(`Import nije uspio: ${res.status} ${msg}`);
+            }
+          }
+        } catch (err) {
+          // If network/backend fails, try client-side as last resort
+          try {
+            await importFromXLSX(file);
+            alert("Excel import završen (obrada u pregledaču).");
+            await refresh();
+          } catch (xlsxErr: any) {
+            throw xlsxErr;
+          }
         }
-        alert("Excel import poslan serveru i obrađen.");
-        await refresh();
       } else {
         alert("Nepodržan format. Dozvoljeni: .xlsx, .xls, .csv");
       }
@@ -827,81 +786,278 @@ export default function ContainersPage() {
     return out;
   }
 
-  async function importFromCSV(text: string) {
-    const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-    if (lines.length === 0) return;
-    const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase());
+  // Normalize header names: lowercase, strip accents/diacritics, collapse separators and punctuation
+  function normKey(s: string) {
+    return String(s || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "")
+      // collapse spaces and common punctuation (._/:;()-)
+      .replace(/[\s._/:;()\-]+/g, " ")
+      .trim();
+  }
 
+  // Try to extract new id from various backend response shapes
+  function getNewIdFromCreate(res: any): number | null {
+    if (!res) return null;
+    const obj = typeof res === "string" ? (() => { try { return JSON.parse(res); } catch { return null; } })() : res;
+    if (!obj) return null;
+    const direct = (obj as any).id ?? (obj as any).ID ?? (obj as any).Id;
+    if (typeof direct === "number") return direct;
+    const data = (obj as any).data;
+    if (data && typeof data === "object") {
+      if (typeof (data as any).id === "number") return (data as any).id;
+      if (Array.isArray(data) && data.length && typeof data[0].id === "number") return data[0].id;
+    }
+    return null;
+  }
+
+  async function importFromCSV(text: string) {
+    // Split and ignore empty lines
+    const linesRaw = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (linesRaw.length === 0) return;
+
+    // Find header row within the first 10 non-empty lines
+    let headerRow = 0;
+    const candidateHeaders = [
+      "supplier","dobavljac","dobavljač","proforma","proforma no","pf no","etd","eta","delivery","qty","kolicina","quantity",
+      "tip","cargo","type","container","kontejner","container no","container number","roba","goods","product",
+      "cijena","cijena eur","price","contain price","contain_price",
+      "agent","total","ukupno","deposit","depozit","balance","balans",
+      "paid","placeno","plaćeno","payment status","status"
+    ].map(normKey);
+
+    for (let i = 0; i < Math.min(linesRaw.length, 10); i++) {
+      const cols = parseCSVLine(linesRaw[i]).map(normKey);
+      const hits = cols.filter(c => candidateHeaders.includes(c)).length;
+      if (hits >= 2) { headerRow = i; break; }
+    }
+
+    const headersRaw = parseCSVLine(linesRaw[headerRow]);
+    // Keep raw headers for fallbacks (e.g., "Unnamed: 15")
+    const headers = headersRaw.map(normKey);
+
+    // hIndex helper uses normalized comparison and many aliases
     const hIndex = (names: string[]) => {
-      for (const n of names) {
-        const idx = headers.indexOf(n.toLowerCase());
-        if (idx !== -1) return idx;
+      const tries = names.map(normKey);
+      for (let i = 0; i < headers.length; i++) {
+        if (tries.includes(headers[i])) return i;
       }
       return -1;
     };
 
     const idx = {
-      supplier: hIndex(["supplier","dobavljač","dobavljac"]),
-      proforma: hIndex(["proforma","proforma_no","proforma number","pf_no","pf number"]),
+      supplier: hIndex(["supplier","dobavljac","dobavljač"]),
+      proforma: hIndex(["proforma","proforma_no","proforma number","proforma no","pf_no","pf no","pf number"]),
       etd: hIndex(["etd"]),
-      delivery: hIndex(["delivery"]),
+      delivery: hIndex(["delivery","isporuka"]),
       eta: hIndex(["eta"]),
-      qty: hIndex(["qty","količina","kolicina","quantity","cargo_qty","cargo quantity"]),
+      qty: hIndex(["qty","kolicina","količina","quantity","cargo_qty","cargo quantity"]),
       cargo: hIndex(["tip","cargo","type"]),
-      container: hIndex(["kontejner","container","container_no","container number"]),
-      roba: hIndex(["roba","goods","product"]),
-      contain_price: hIndex(["cijena","cena","price","contain_price"]),
-      agent: hIndex(["agent"]),
-      total: hIndex(["total","ukupno"]),
-      deposit: hIndex(["deposit","depozit"]),
-      balance: hIndex(["balance","balans"]),
-      paid: hIndex(["paid","plaćeno","placeno","payment_status"]),
+      container: hIndex(["kontejner","container","container_no","container no","container number","broj kontejnera","kontejner broj"]),
+      roba: hIndex(["roba","goods","product","artikal"]),
+      contain_price: hIndex(["cijena","cijena eur","price","contain price","contain_price","cijena kontejnera"]),
+      agent: hIndex(["agent","spediter","špediter"]),
+      total: hIndex(["total","ukupno","total (eur)","ukupno (eur)"]),
+      deposit: hIndex(["deposit","depozit","deposit (eur)","depozit (eur)"]),
+      balance: hIndex(["balance","balans","balance (eur)","balans (eur)"]),
+      paid: hIndex(["paid","placeno","plaćeno","payment_status","payment status","status"]),
     };
+    // Fallback: detect unnamed "paid/status" column (e.g., Excel "Unnamed: 15")
+    if (idx.paid === -1) {
+      for (let i = 0; i < headersRaw.length; i++) {
+        const raw = String(headersRaw[i] ?? "").toLowerCase();
+        if (raw.startsWith("unnamed")) { idx.paid = i; break; }
+      }
+    }
 
     // create sequentially to avoid hammering the API
-    for (let li = 1; li < lines.length; li++) {
-      const cols = parseCSVLine(lines[li]);
+    for (let li = headerRow + 1; li < linesRaw.length; li++) {
+      const cols = parseCSVLine(linesRaw[li]);
       if (cols.length === 0) continue;
 
       const pick = (i: number) => (i >= 0 && i < cols.length ? cols[i] : "");
       const toNum = (v: any) => {
-        const n = Number(String(v).replace(/\s/g, "").replace(",", "."));
+        if (v === null || v === undefined || v === "") return 0;
+        if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+        const s0 = String(v).trim();
+        // If both separators exist, assume EU style ('.' thousands, ',' decimal)
+        if (s0.includes(".") && s0.includes(",")) {
+          const s = s0.replace(/\./g, "").replace(/,/g, ".");
+          const n = Number(s);
+          return Number.isFinite(n) ? n : 0;
+        }
+        // If only comma exists, treat comma as decimal separator
+        if (s0.includes(",") && !s0.includes(".")) {
+          const s = s0.replace(/\s/g, "").replace(/,/g, ".");
+          const n = Number(s);
+          return Number.isFinite(n) ? n : 0;
+        }
+        // Default: plain Number after removing thin spaces
+        const n = Number(s0.replace(/\s/g, ""));
         return Number.isFinite(n) ? n : 0;
-        };
+      };
       const truthy = (v: any) => isTruthy(v);
+
+      // Normalize EU date formats to ISO
+      const normDate = (v: string) => {
+        const s = String(v || "").trim();
+        if (!s) return "";
+        // dd.MM.yy(yy) or dd/MM/yy(yy) or dd-MM-yy(yy)
+        if (/^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}$/.test(s)) return fromEU(s);
+        return s; // assume already ISO
+      };
 
       const proforma_no = pick(idx.proforma);
       const container_no = pick(idx.container);
       const qty = toNum(pick(idx.qty));
+      // Handle combined patterns like "1 x 40HQ" in CARGO QTY
+      let qtyParsed = qty;
+      let cargoTypeFromQty = "";
+      const rawQtyCell = pick(idx.qty);
+      if ((!qtyParsed || qtyParsed === 0) && rawQtyCell) {
+        const m = String(rawQtyCell).match(/(\d+)\s*[xX]\s*([0-9A-Za-z\-]+)/);
+        if (m) {
+          qtyParsed = Number(m[1]);
+          cargoTypeFromQty = m[2];
+        }
+      }
+      // Fallback: detect container number anywhere in the row if column missing
+      let container_no_detected = container_no;
+      if (!container_no_detected) {
+        const joined = cols.join(" ");
+        const mC = joined.match(/\b([A-Z]{4}\d{7})\b/i);
+        if (mC) container_no_detected = mC[1].toUpperCase();
+      }
 
       const payload: any = {
         supplier: pick(idx.supplier),
         proforma_no,
         proforma: proforma_no,
-        etd: pick(idx.etd),
-        delivery: pick(idx.delivery),
-        eta: pick(idx.eta),
-        cargo_qty: qty,
-        qty,
-        quantity: qty,
-        cargo: pick(idx.cargo),
-        container_no,
-        container: container_no,
-        containerNo: container_no,
+        etd: normDate(pick(idx.etd)),
+        delivery: normDate(pick(idx.delivery)),
+        eta: normDate(pick(idx.eta)),
+        cargo_qty: qtyParsed,
+        qty: qtyParsed,
+        quantity: qtyParsed,
+        cargo: pick(idx.cargo) || cargoTypeFromQty,
+        type: pick(idx.cargo) || cargoTypeFromQty, // some backends expect 'type' instead of 'cargo'
+        container_no: container_no_detected,
+        container: container_no_detected,
+        containerNo: container_no_detected,
+        container_number: container_no_detected,
+        containerno: container_no_detected,
+        containerNum: container_no_detected,
         roba: pick(idx.roba),
         contain_price: toNum(pick(idx.contain_price)),
+        price: toNum(pick(idx.contain_price)), // extra alias
         agent: pick(idx.agent),
         total: toNum(pick(idx.total)),
         deposit: toNum(pick(idx.deposit)),
         balance: toNum(pick(idx.balance)),
         paid: truthy(pick(idx.paid)),
+        payment_status: truthy(pick(idx.paid)) ? "paid" : "unpaid", // alias for strict backends
+        // If header missing, try to detect "plaćeno/placeno/paid" anywhere in the row
+        ...( (idx.paid === -1 || !pick(idx.paid)) && (()=>{
+            const rowTxt = cols.join(" ").toLowerCase();
+            const isPaid = rowTxt.includes("plaćeno") || rowTxt.includes("placeno") || rowTxt.includes("paid");
+            return { paid: isPaid };
+          })() ),
       };
 
       try {
-        await api.createContainer(payload as any);
+        // 1) Create the container
+        const created = await api.createContainer(payload as any).catch((e: any) => {
+          console.warn("Create via api.createContainer failed, will try direct fallbacks", e);
+          return null;
+        });
+
+        // Try to obtain the new id
+        let newId = getNewIdFromCreate(created as any);
+
+        // If we didn't get an ID, try a couple of direct create fallbacks (JSON and FORM)
+        if (!newId) {
+          // JSON to collection
+          try {
+            const resC = await fetch(`${API_BASE}/api/containers`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Accept: "application/json, text/plain;q=0.9, */*;q=0.8", ...authHeaders() },
+              body: JSON.stringify(payload),
+            });
+            if (resC.ok) {
+              const ct = resC.headers.get("content-type") || "";
+              const data = ct.includes("application/json") ? await resC.json().catch(() => null) : await resC.text().catch(() => null);
+              newId = getNewIdFromCreate(data);
+            }
+          } catch {}
+        }
+        if (!newId) {
+          // FORM to collection
+          try {
+            const usp = new URLSearchParams();
+            Object.entries(payload).forEach(([k, v]) => {
+              if (v === undefined || v === null) return;
+              usp.append(k, typeof v === "boolean" ? (v ? "1" : "0") : String(v));
+            });
+            const resF = await fetch(`${API_BASE}/api/containers`, {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", Accept: "application/json, text/plain;q=0.9, */*;q=0.8", ...authHeaders() },
+              body: usp.toString(),
+            });
+            if (resF.ok) {
+              const ct2 = resF.headers.get("content-type") || "";
+              const data2 = ct2.includes("application/json") ? await resF.json().catch(() => null) : await resF.text().catch(() => null);
+              newId = getNewIdFromCreate(data2);
+            }
+          } catch {}
+        }
+
+        // 2) Force-update with a wide alias payload so stricter backends persist all fields
+        if (newId) {
+          await updateContainerWithFallbacks(newId, {
+            // proforma aliases
+            proforma_no: payload.proforma_no, proforma: payload.proforma, proformaNo: payload.proforma_no, proforma_number: payload.proforma_no, pf_no: payload.proforma_no, pfNumber: payload.proforma_no,
+            // dates
+            etd: payload.etd, delivery: payload.delivery, eta: payload.eta,
+            // qty aliases
+            cargo_qty: payload.cargo_qty, qty: payload.cargo_qty, quantity: payload.cargo_qty, cargoQty: payload.cargo_qty, cargo_quantity: payload.cargo_qty,
+            // cargo/type
+            cargo: payload.cargo, type: payload.type,
+            // container aliases
+            container_no: payload.container_no, container: payload.container_no, containerNo: payload.container_no, container_number: payload.container_no, containerno: payload.container_no, containerNum: payload.container_no,
+            // money fields + aliases
+            contain_price: payload.contain_price, price: payload.price,
+            total: payload.total, deposit: payload.deposit, balance: payload.balance,
+            // paid/status
+            paid: payload.paid, payment_status: payload.payment_status, status: payload.paid ? "plaćeno" : "nije plaćeno",
+            // extras
+            supplier: payload.supplier, roba: payload.roba, agent: payload.agent,
+          }).catch((e) => {
+            console.warn("Post-create update failed for id", newId, e);
+          });
+        }
       } catch (e) {
-        console.error("Ne mogu kreirati iz CSV reda", li + 1, e);
+        console.error("Ne mogu kreirati iz CSV/Excel reda", li + 1, e, payload);
       }
+    }
+  }
+
+  // Excel import fallback using SheetJS (xlsx) in-browser
+  async function importFromXLSX(file: File) {
+    try {
+      const buf = await file.arrayBuffer();
+      // Dynamic import to avoid adding weight if unused
+      // @ts-ignore — allow untyped dynamic import
+      const XLSX = (await import("xlsx")).default || (await import("xlsx"));
+      const wb = XLSX.read(buf, { type: "array" });
+      const firstSheetName = wb.SheetNames[0];
+      const ws = wb.Sheets[firstSheetName];
+      // Reuse our robust CSV pipeline by converting the sheet to CSV
+      const csv: string = XLSX.utils.sheet_to_csv(ws);
+      await importFromCSV(csv);
+    } catch (e) {
+      console.error("XLSX parse failed", e);
+      throw new Error("Ne mogu parsirati Excel u browseru. Instaliraj paket 'xlsx' ili koristi CSV.");
     }
   }
 
@@ -1254,49 +1410,74 @@ export default function ContainersPage() {
     <div className="content-area flex-1 transition-all duration-300">
       <div className="page-head card fullbleed" style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 12 }}>
         <div>
-          <h1 style={{ marginBottom: 8 }}>Informacije o Kontejnerima</h1>
-          <div className="filters" style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-            <div className="filter-item">
-              <label style={{ fontSize: 12, opacity: 0.8 }}>Dobavljač</label>
-              <select className="input" value={filterSupplier} onChange={(e) => setFilterSupplier(e.target.value)}>
-                <option value="">Svi</option>
-                {supplierOptions.map(s => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
+          {/* TITLE + FILTER TOGGLE */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between" }}>
+            <h1 style={{ margin: 0 }}>Informacije o Kontejnerima</h1>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => setFiltersOpen((v) => !v)}
+              aria-expanded={filtersOpen}
+              title={filtersOpen ? "Sakrij filtere" : "Prikaži filtere"}
+              style={{ whiteSpace: "nowrap" }}
+            >
+              {filtersOpen ? "Sakrij filtere ▲" : "Prikaži filtere ▼"}
+            </button>
+          </div>
 
-            <div className="filter-item">
-              <label style={{ fontSize: 12, opacity: 0.8 }}>Status</label>
-              <select className="input" value={filterPaid} onChange={(e) => setFilterPaid(e.target.value as any)}>
-                <option value="all">Svi</option>
-                <option value="paid">Plaćeni</option>
-                <option value="unpaid">Neplaćeni</option>
-              </select>
-            </div>
+          {/* FILTERS BAR */}
+          {filtersOpen && (
+            <div
+              className="filters-bar"
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 12,
+                alignItems: "center",
+                marginTop: 10,
+              }}
+            >
+              {/* Dobavljač */}
+              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span aria-hidden="true" title="Dobavljač">📦</span>
+                <label style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap" }}>Dobavljač</label>
+                <select className="input" value={filterSupplier} onChange={(e) => setFilterSupplier(e.target.value)}>
+                  <option value="">Svi</option>
+                  {supplierOptions.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
 
-            <div className="filter-item" style={{ display: "flex", gap: 6, alignItems: "end" }}>
-              <div>
-                <label style={{ fontSize: 12, opacity: 0.8 }}>Datum</label>
+              {/* Status */}
+              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span aria-hidden="true" title="Status">💳</span>
+                <label style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap" }}>Status</label>
+                <select className="input" value={filterPaid} onChange={(e) => setFilterPaid(e.target.value as any)}>
+                  <option value="all">Svi</option>
+                  <option value="paid">Plaćeni</option>
+                  <option value="unpaid">Neplaćeni</option>
+                </select>
+              </div>
+
+              {/* Datum raspon */}
+              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span aria-hidden="true" title="Datum">📅</span>
+                <label style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap" }}>Datum</label>
                 <select className="input" value={filterDateField} onChange={(e) => setFilterDateField(e.target.value as any)}>
                   <option value="eta">ETA</option>
                   <option value="etd">ETD</option>
                   <option value="delivery">Delivery</option>
                 </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 12, opacity: 0.8 }}>Od</label>
                 <input className="input" type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, opacity: 0.8 }}>Do</label>
+                <span style={{ opacity: 0.7 }}>–</span>
                 <input className="input" type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} />
               </div>
-            </div>
 
-            <div className="filter-item" style={{ display: "flex", gap: 6, alignItems: "end" }}>
-              <div>
-                <label style={{ fontSize: 12, opacity: 0.8 }}>Sortiraj po</label>
+              {/* Sortiranje */}
+              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span aria-hidden="true" title="Sortiraj">↕️</span>
+                <label style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap" }}>Sortiraj po</label>
                 <select className="input" value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}>
                   <option value="eta">ETA</option>
                   <option value="etd">ETD</option>
@@ -1306,57 +1487,69 @@ export default function ContainersPage() {
                   <option value="paid">Plaćanje</option>
                   <option value="id">#</option>
                 </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 12, opacity: 0.8 }}>Smjer</label>
                 <select className="input" value={sortDir} onChange={(e) => setSortDir(e.target.value as any)}>
                   <option value="asc">Rastuće</option>
                   <option value="desc">Opadajuće</option>
                 </select>
               </div>
-            </div>
 
-            <div className="filter-item" style={{ flex: "1 1 260px", position: "relative" }}>
-              <label style={{ fontSize: 12, opacity: 0.8 }}>Pretraga</label>
-              <input
-                type="search"
-                className="input"
-                placeholder="dobavljač, proforma, kontejner, agent, …"
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                style={{ paddingRight: 28 }}
-              />
-              {searchText && (
+              {/* Pretraga */}
+              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6, flex: "1 1 260px" }}>
+                <span aria-hidden="true" title="Pretraga">🔎</span>
+                <label style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap" }}>Pretraga</label>
+                <div style={{ position: "relative", flex: 1, display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="search"
+                    className="input"
+                    placeholder="dobavljač, proforma, kontejner, agent, …"
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setSearchText(searchText)}
+                    title="Primijeni pretragu"
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    Pretraži
+                  </button>
+                  {searchText && (
+                    <button
+                      type="button"
+                      aria-label="Očisti pretragu"
+                      onClick={() => setSearchText("")}
+                      className="btn ghost"
+                      title="Očisti"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Reset – niži prioritet, sivi ton */}
+              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <button
                   type="button"
-                  aria-label="Očisti pretragu"
-                  onClick={() => setSearchText("")}
-                  style={{ position: "absolute", right: 6, bottom: 6, fontSize: 16, lineHeight: 1, background: "transparent", border: 0, cursor: "pointer" }}
+                  className="btn ghost"
+                  onClick={() => {
+                    setFilterSupplier("");
+                    setFilterPaid("all");
+                    setFilterFrom("");
+                    setFilterTo("");
+                    setFilterDateField("eta");
+                    setSortBy("eta");
+                    setSortDir("asc");
+                    setSearchText("");
+                  }}
+                  title="Resetuj filtere"
                 >
-                  ×
+                  Reset
                 </button>
-              )}
+              </div>
             </div>
-
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => {
-                setFilterSupplier("");
-                setFilterPaid("all");
-                setFilterFrom("");
-                setFilterTo("");
-                setFilterDateField("eta");
-                setSortBy("eta");
-                setSortDir("asc");
-                setSearchText("");
-              }}
-              title="Resetuj filtere"
-              style={{ alignSelf: "end" }}
-            >
-              Reset
-            </button>
-          </div>
+          )}
         </div>
 
         <div className="head-actions" style={{ display: "flex", gap: 8, alignItems: "center", justifySelf: "end" }}>

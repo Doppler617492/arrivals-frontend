@@ -77,11 +77,12 @@ export default function Sidebar() {
         onClick={() => setIsOpen((v) => !v)}
         aria-pressed={isOpen}
         className={[
-          "fixed z-40 top-1/2 -translate-y-1/2 transition-all",
+          "fixed z-40 transition-all",
           isOpen ? "left-[calc(var(--sidebar-w)-12px)]" : "left-3",
           "rounded-full border border-gray-200 bg-white/90 backdrop-blur shadow px-1.5 py-1",
           "hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 active:bg-primary/10"
         ].join(" ")}
+        style={{ top: "calc(56px + 50vh)" }}
         title={isOpen ? "Sakrij meni" : "Prikaži meni"}
       >
 
@@ -94,11 +95,11 @@ export default function Sidebar() {
 
       <aside
         className={[
-          "fixed left-0 top-0 z-30 h-screen shrink-0 border-r border-gray-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80 px-3 md:px-4 py-5 flex flex-col transition-transform duration-300 ease-in-out",
+          "fixed left-0 z-30 h-screen shrink-0 border-r border-gray-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80 px-3 md:px-4 py-5 flex flex-col transition-transform duration-300 ease-in-out",
           isOpen ? "translate-x-0" : "-translate-x-full",
         ].join(" ")}
         aria-label="Glavna navigacija"
-        style={{ width: "var(--sidebar-w)" }}
+        style={{ width: "var(--sidebar-w)", top: "56px", height: "calc(100vh - 56px)" }}
       >
         <h1 className="text-base md:text-lg font-extrabold tracking-tight text-gray-900 mb-4 select-none">
           Arrivals

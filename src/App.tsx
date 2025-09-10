@@ -2,21 +2,19 @@
 import React from "react";
 import { Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import LoginView from "./features/auth/LoginView";
-import ArrivalsTable from "./components/ArrivalsTable";
+import RegisterView from "./features/auth/RegisterView";
+import ArrivalsPage from "./pages/Arrivals";
 import UsersPage from "./pages/UsersPage";
 import ContainersPage from "./pages/Containers";
-import { Button } from "@/components/ui/button";
+import SettingsPage from "./pages/Settings";
 import { apiGET, getToken, setToken } from "./api/client";
 import type { User } from "./types";
 import Sidebar from "./components/Sidebar";
+import Header from "./components/Header";
 import "./index.css";
 
-type Tab = "arrivals" | "containers" | "users";
-
-function Shell({ user }: { user: User }) {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const [sidebarOpen, setSidebarOpen] = React.useState(true);
+function Shell() {
+  const [sidebarOpen] = React.useState(true);
 
   React.useEffect(() => {
     const cls = 'sidebar-collapsed';
@@ -30,63 +28,18 @@ function Shell({ user }: { user: User }) {
     };
   }, [sidebarOpen]);
 
-  const pathToTab = (path: string): Tab => {
-    if (path.startsWith("/containers")) return "containers";
-    if (path.startsWith("/users")) return "users";
-    return "arrivals";
-  };
-  const tabToPath = (tab: Tab) =>
-    tab === "containers" ? "/containers" : tab === "users" ? "/users" : "/arrivals";
-
-  const currentTab = pathToTab(location.pathname);
-
   return (
     <div className="min-h-screen bg-[#f7f8fb] text-[hsl(var(--foreground))]">
-      {/* Top bar */}
-      <header className="sticky top-0 z-30 border-b border-[hsl(var(--border))] bg-white/80 backdrop-blur">
-        <div className="w-full px-4 md:px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              className="shrink-0"
-              onClick={() => setSidebarOpen((v) => !v)}
-              aria-label={sidebarOpen ? "Sakrij meni" : "Prikaži meni"}
-            >
-              {sidebarOpen ? "⟨⟨" : "⟩⟩"}
-            </Button>
-            <img src="/logo-cungu.png" alt="Cungu" className="w-7 h-7 rounded-md shadow" />
-            <div className="font-extrabold tracking-tight">Arrivals</div>
-          </div>
-          <div className="flex items-center gap-3 text-sm">
-            <span className="hidden sm:inline opacity-70">{user.name} • {user.role}</span>
-            <Button variant="outline" onClick={() => { setToken(null); window.location.href = "/"; }}>
-              Odjava
-            </Button>
-          </div>
-        </div>
-      </header>
+      <Header />
 
       <div className="flex w-full">
         {/* Sidebar still works with current/setTab but behind the scenes we route */}
-        {sidebarOpen && (
-          <Sidebar
-            current={currentTab}
-            setTab={(t: Tab) => navigate(tabToPath(t))}
-          />
-        )}
+        {sidebarOpen && <Sidebar />}
 
         {/* Page container - full width, no side gaps; horizontal scroll allowed */}
         <main className="content-area p-3 md:p-4 lg:p-6 overflow-x-auto">
           <Routes>
-            <Route
-              path="/arrivals"
-              element={
-                <section className="w-full">
-                  <h1 className="text-[18px] font-semibold mb-3">Dolasci</h1>
-                  <ArrivalsTable />
-                </section>
-              }
-            />
+            <Route path="/arrivals" element={<ArrivalsPage />} />
             <Route
               path="/containers"
               element={
@@ -105,6 +58,15 @@ function Shell({ user }: { user: User }) {
                 </section>
               }
             />
+            <Route
+              path="/settings"
+              element={
+                <section className="w-full">
+                  <h1 className="text-[18px] font-semibold mb-3">Postavke</h1>
+                  <SettingsPage />
+                </section>
+              }
+            />
             <Route index element={<Navigate to="/arrivals" replace />} />
             <Route path="*" element={<Navigate to="/arrivals" replace />} />
           </Routes>
@@ -115,6 +77,8 @@ function Shell({ user }: { user: User }) {
 }
 
 export default function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [user, setUser] = React.useState<User | null>(null);
   const [loadingMe, setLoadingMe] = React.useState(true);
 
@@ -141,15 +105,34 @@ export default function App() {
   }
 
   if (!user) {
+    // Neprijavljen korisnik: dozvoli /login i /register bez Header/Sidebar-a
     return (
-      <div className="min-h-screen grid place-items-center">
-        <LoginView onLoggedIn={setUser} />
-      </div>
+      <Routes>
+        <Route
+          path="/login"
+          element={
+            <div className="min-h-screen grid place-items-center bg-[#f1f5f9]">
+              <LoginView onLoggedIn={setUser} />
+            </div>
+          }
+        />
+        <Route
+          path="/register"
+          element={
+            <div className="min-h-screen grid place-items-center bg-[#f1f5f9]">
+              <RegisterView onSubmitted={() => navigate("/login?requested=1")} />
+            </div>
+          }
+        />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
     );
   }
 
+  // Ako je korisnik prijavljen a ruta je /login ili /register, prebaci na /arrivals
+  if (location.pathname === "/login" || location.pathname === "/register") {
+    return <Navigate to="/arrivals" replace />;
+  }
   // Router is provided in main.tsx; just render the Shell here
-  return (
-    <Shell user={user} />
-  );
+  return <Shell />;
 }
