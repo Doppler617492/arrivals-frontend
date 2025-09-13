@@ -17,7 +17,10 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
     setLoading(true);
     try {
       const data = await apiPOST<{ access_token: string; user?: User }>("/auth/login", { email, password });
+      // Save token under both "token" and "access_token" for compatibility
       setToken(data.access_token);
+      localStorage.setItem("token", data.access_token);
+      localStorage.setItem("access_token", data.access_token);
       // Ako backend već vrati user-a, iskoristi to; u suprotnom pozovi /auth/me
       const user = data.user ?? (await apiGET<{ user: User }>("/auth/me", true)).user;
       onLoggedIn(user);

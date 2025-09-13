@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import type { DropResult } from "@hello-pangea/dnd";
-import { FileIcon, TruckIcon, Filter, RotateCcw, Search, Plus, Calendar, Upload } from "lucide-react";
+import { FileIcon, TruckIcon, Filter, RotateCcw, Search, Plus, Calendar, Upload, Trash2 } from "lucide-react";
 import ArrivalModal from "../components/ArrivalModal";
 import type { Arrival } from "../components/ArrivalCard";
 
@@ -19,22 +19,31 @@ const transportOptions = [
   { v: "train", label: "Voz" },
 ];
 
-const locationOptions = [
+export type LocationOption = { v: string; label: string };
+
+export const locationOptions: LocationOption[] = [
   { v: "", label: "Sve lokacije" },
-  { v: "Magacin", label: "Magacin" },
-  { v: "Carinsko skladiste", label: "Carinsko skladište" },
-  { v: "PG centar", label: "PG centar" },
-  { v: "Bar centar", label: "Bar centar" },
-  { v: "Kotor centar", label: "Kotor centar" },
+  { v: "Veleprodajni Magacin", label: "Veleprodajni Magacin" },
+  { v: "Carinsko Skladiste", label: "Carinsko Skladiste" },
+  { v: "Pg Centar", label: "Pg Centar" },
+  { v: "Pg", label: "Pg" },
   { v: "Bar", label: "Bar" },
-  { v: "Ulcinj centar", label: "Ulcinj centar" },
-  { v: "Podgorica", label: "Podgorica" },
-  { v: "Bijelo polje", label: "Bijelo polje" },
-  { v: "Niksic", label: "Nikšić" },
-  { v: "Hercegnovi centar", label: "Hercegnovi centar" },
-  { v: "Herceg novi", label: "Herceg Novi" },
+  { v: "Bar Centar", label: "Bar Centar" },
   { v: "Budva", label: "Budva" },
+  { v: "Kotor Centar", label: "Kotor Centar" },
+  { v: "Herceg Novi", label: "Herceg Novi" },
+  { v: "Herceg Novi Centar", label: "Herceg Novi Centar" },
+  { v: "Niksic", label: "Niksic" },
+  { v: "Bijelo polje", label: "Bijelo polje" },
+  { v: "Ulcinj Centar", label: "Ulcinj Centar" },
+  { v: "Horeca", label: "Horeca" },
 ];
+
+export const responsibleOptions = ["Ludvig", "Gazi", "Gezim", "Armir", "Rrezart", "Beki"];
+
+export const allLocationValues = Array.from(new Set(locationOptions.filter(o => o.v).map(o => o.v))).sort((a, b) =>
+  a.localeCompare(b, "sr", { sensitivity: "base" })
+);
 
 // Normalize various backend status strings into our 3 buckets
 function normalizeStatus(s: any): "not_shipped" | "shipped" | "arrived" {
@@ -135,6 +144,19 @@ export default function ArrivalsPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [active, setActive] = useState<Arrival | null>(null);
 
+  // Expose the same location lists used by the filter to the whole app (ArrivalModal, etc.)
+  useEffect(() => {
+    try {
+      // raw values without the empty "Sve lokacije"
+      (window as any).ALL_LOCATIONS = allLocationValues;
+      // option objects (label + value) without the empty one
+      (window as any).LOCATION_OPTIONS = locationOptions.filter(o => o.v);
+
+      // Let any listeners know locations are ready/updated
+      window.dispatchEvent(new CustomEvent("locations-set", { detail: { values: (window as any).ALL_LOCATIONS, options: (window as any).LOCATION_OPTIONS } }));
+    } catch {}
+  }, []);
+
   const filtered = useMemo(() => {
     const ql = q.trim().toLowerCase();
     const inRange = (iso: string) => {
@@ -162,9 +184,25 @@ export default function ArrivalsPage() {
 
   async function load() {
     setLoading(true);
+    // snapshot previous arrivals by id for responsible backfill
+    const prevById = new Map<number, Arrival>(arrivals.map(a => [a.id, a]));
     try {
       const data = await httpJSON<any[]>("/api/arrivals");
-      const norm: Arrival[] = (Array.isArray(data) ? data : []).map((a: any) => ({
+      // Enhanced mapping for files_count and backfill for zero counts
+      const raw: any[] = Array.isArray(data) ? data : [];
+      // read local overrides for responsible (persisted in ArrivalCard)
+      let overrides: Record<string, string> = {};
+      try {
+        const overridesRaw = localStorage.getItem("arrivalResponsibleOverrides");
+        overrides = overridesRaw ? JSON.parse(overridesRaw) : {};
+      } catch {}
+      // read local overrides for location (persisted on save)
+      let locOverrides: Record<string, string> = {};
+      try {
+        const locRaw = localStorage.getItem("arrivalLocationOverrides");
+        locOverrides = locRaw ? JSON.parse(locRaw) : {};
+      } catch {}
+      const norm: Arrival[] = raw.map((a: any) => ({
         id: Number(a.id),
         supplier: a.supplier ?? "",
         carrier: a.carrier ?? "",
@@ -174,14 +212,153 @@ export default function ArrivalsPage() {
         eta: a.eta ?? "",
         arrived_at: a.arrived_at ?? "",
         transport_type: a.transport_type ?? a.type ?? "",
+        // also mirror to `type` for downstream components that may read it
+        type: a.transport_type ?? a.type ?? "",
         status: normalizeStatus(a.status),
         goods_cost: Number(a.goods_cost ?? a.goodsCost ?? 0),
         freight_cost: Number(a.freight_cost ?? a.freightCost ?? 0),
-        location: a.location ?? "",
+        // be robust to alternate keys + prefer overrides and previous value if list API omits location
+        location: (() => {
+          const fromOverride = locOverrides[String(a.id)] || "";
+          if (fromOverride && String(fromOverride).trim() !== "") return String(fromOverride);
+          const v = a.location ?? a.place ?? "";
+          if (v && String(v).trim() !== "") return String(v);
+          const prev = prevById.get(Number(a.id));
+          return prev?.location ?? "";
+        })(),
+        responsible: (() => {
+          const fromOverride = overrides[String(a.id)] || "";
+          if (fromOverride && String(fromOverride).trim() !== "") return String(fromOverride);
+          const v = a.responsible ?? a.assignee_name ?? a.assignee ?? a.assignee_id ?? "";
+          if (v && String(v).trim() !== "") return String(v);
+          const prev = prevById.get(Number(a.id));
+          return prev?.responsible ?? "";
+        })(),
         note: a.note ?? "",
         files: Array.isArray(a.files) ? a.files : (a.files ? [a.files] : []),
+        // accept multiple casing variants from API and fallback to counted array
+        files_count: Number(
+          a.files_count ??
+          a.filesCount ??
+          a.file_count ??
+          (Array.isArray(a.files) ? a.files.length : 0)
+        ),
       }));
+      // Persist discovered responsibles to localStorage so they survive refresh, even if /api/arrivals omits them
+      try {
+        const overridesRaw0 = localStorage.getItem("arrivalResponsibleOverrides");
+        const existing0: Record<string, string> = overridesRaw0 ? JSON.parse(overridesRaw0) : {};
+        const merged0: Record<string, string> = { ...existing0 };
+        for (const it of norm) {
+          if (it.responsible && String(it.responsible).trim() !== "") {
+            merged0[String(it.id)] = String(it.responsible);
+          }
+        }
+        localStorage.setItem("arrivalResponsibleOverrides", JSON.stringify(merged0));
+      } catch {}
+      // Persist discovered locations to localStorage so they survive refresh, even if /api/arrivals omits them
+      try {
+        const locRaw0 = localStorage.getItem("arrivalLocationOverrides");
+        const locExisting0: Record<string, string> = locRaw0 ? JSON.parse(locRaw0) : {};
+        const locMerged0: Record<string, string> = { ...locExisting0 };
+        for (const it of norm) {
+          if (it.location && String(it.location).trim() !== "") {
+            locMerged0[String(it.id)] = String(it.location);
+          }
+        }
+        localStorage.setItem("arrivalLocationOverrides", JSON.stringify(locMerged0));
+      } catch {}
       setArrivals(norm);
+      setLoading(false);
+      // best-effort: if some items still show 0, probe their files endpoint to backfill counts (non-blocking)
+      {
+        try {
+          const zeros = norm.filter(x => !Number.isFinite(x.files_count) || x.files_count === 0);
+          if (zeros.length) {
+            zeros.forEach(async (x) => {
+              try {
+                const res = await fetch(`${API_BASE}/api/arrivals/${x.id}/files`, {
+                  credentials: "include",
+                  headers: {
+                    Accept: "application/json",
+                    ...(localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}),
+                  },
+                });
+                if (!res.ok) return;
+                const arr = await res.json();
+                const cnt = Array.isArray(arr) ? arr.length : (Array.isArray(arr?.items) ? arr.items.length : 0);
+                if (cnt > 0) {
+                  setArrivals(prev => prev.map(it => it.id === x.id ? { ...it, files_count: cnt } : it));
+                }
+              } catch {}
+            });
+          }
+        } catch {}
+      }
+      // best-effort: if some items still miss responsible, probe detail endpoint (non-blocking)
+      {
+        try {
+          const needResp = norm.filter(x => !x.responsible);
+          if (needResp.length) {
+            needResp.forEach(async (x) => {
+              try {
+                const r = await fetch(`${API_BASE}/api/arrivals/${x.id}`, {
+                  credentials: "include",
+                  headers: {
+                    Accept: "application/json",
+                    ...(localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}),
+                  },
+                });
+                if (!r.ok) return;
+                const item = await r.json();
+                const resp = item?.responsible ?? item?.assignee_name ?? item?.assignee ?? item?.assignee_id ?? "";
+                if (resp && String(resp).trim() !== "") {
+                  const val = String(resp);
+                  setArrivals(prev => prev.map(it => it.id === x.id ? { ...it, responsible: val } : it));
+                  try {
+                    const overridesRaw2 = localStorage.getItem("arrivalResponsibleOverrides");
+                    const existing2: Record<string, string> = overridesRaw2 ? JSON.parse(overridesRaw2) : {};
+                    existing2[String(x.id)] = val;
+                    localStorage.setItem("arrivalResponsibleOverrides", JSON.stringify(existing2));
+                  } catch {}
+                }
+              } catch {}
+            });
+          }
+        } catch {}
+      }
+      // best-effort: if some items still miss location, probe detail endpoint (non-blocking)
+      {
+        try {
+          const needLoc = norm.filter(x => !x.location);
+          if (needLoc.length) {
+            needLoc.forEach(async (x) => {
+              try {
+                const r = await fetch(`${API_BASE}/api/arrivals/${x.id}`, {
+                  credentials: "include",
+                  headers: {
+                    Accept: "application/json",
+                    ...(localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}),
+                  },
+                });
+                if (!r.ok) return;
+                const item = await r.json();
+                const loc = item?.location ?? item?.place ?? "";
+                if (loc && String(loc).trim() !== "") {
+                  const val = String(loc);
+                  setArrivals(prev => prev.map(it => it.id === x.id ? { ...it, location: val } : it));
+                  try {
+                    const locRaw2 = localStorage.getItem("arrivalLocationOverrides");
+                    const locExisting2: Record<string, string> = locRaw2 ? JSON.parse(locRaw2) : {};
+                    locExisting2[String(x.id)] = val;
+                    localStorage.setItem("arrivalLocationOverrides", JSON.stringify(locExisting2));
+                  } catch {}
+                }
+              } catch {}
+            });
+          }
+        } catch {}
+      }
     } catch (e) {
       console.error("Ne mogu učitati arrivals", e);
     } finally {
@@ -191,6 +368,30 @@ export default function ArrivalsPage() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    const onFilesUpdated = () => { load(); };
+    window.addEventListener("files-updated", onFilesUpdated as EventListener);
+    return () => window.removeEventListener("files-updated", onFilesUpdated as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const onArrivalsRefetch = () => { load(); };
+    window.addEventListener("arrivals-refetch", onArrivalsRefetch as EventListener);
+    return () => window.removeEventListener("arrivals-refetch", onArrivalsRefetch as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const onArrivalUpdated = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      const id = Number(detail.id);
+      const patch = (detail.patch || {}) as Partial<Arrival>;
+      if (!id) return;
+      setArrivals(prev => prev.map(a => (a.id === id ? { ...a, ...patch } : a)));
+    };
+    window.addEventListener("arrival-updated", onArrivalUpdated as EventListener);
+    return () => window.removeEventListener("arrival-updated", onArrivalUpdated as EventListener);
   }, []);
 
   useEffect(() => {
@@ -306,7 +507,10 @@ export default function ArrivalsPage() {
             className="border rounded px-2 py-1 w-full"
           />
         </div>
-        <button className="border rounded px-3 py-1 bg-gray-100" onClick={onReset}>
+        <button
+          className="rounded px-3 py-1 bg-red-600 text-white hover:bg-red-700"
+          onClick={onReset}
+        >
           <RotateCcw size={14} className="inline mr-1" /> Reset
         </button>
       </div>
@@ -341,6 +545,17 @@ export default function ArrivalsPage() {
                             <span className={`text-xs px-2 py-1 rounded ${statusMeta[a.status].badge}`}>{statusMeta[a.status].label}</span>
                           </div>
                           <div className="font-semibold">{a.supplier}</div>
+                          {/* Responsible & Location meta */}
+                          <div className="text-sm mb-0.5 flex items-center gap-4 text-gray-700">
+                            <span className="flex items-center gap-1" title="Odgovorna osoba">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-user"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
+                              {a.responsible || '—'}
+                            </span>
+                            <span className="flex items-center gap-1" title="Lokacija">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-map-pin"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                              {a.location || '—'}
+                            </span>
+                          </div>
                           <div className="text-sm mb-0.5 flex items-center gap-1">
                             <Calendar size={14} className="opacity-80" /> Preuzimanje: {fmtDate(a.pickup_date)}
                           </div>
@@ -363,20 +578,46 @@ export default function ArrivalsPage() {
                                 Detalji
                               </button>
                               <button
-                                className="p-1 rounded hover:bg-gray-100"
+                                className="w-10 h-10 inline-flex items-center justify-center rounded-md border border-gray-200 text-gray-700 hover:bg-gray-100"
                                 title="Fajlovi / Upload"
+                                aria-label={`Fajlovi / Upload za pošiljku #${a.id}`}
                                 onClick={() => {
                                   setActive(a);
                                   setDetailOpen(true);
                                   setTimeout(() => window.dispatchEvent(new CustomEvent("open-upload", { detail: { id: a.id } })), 150);
                                 }}
                               >
-                                <Upload size={16} />
+                                <Upload size={24} strokeWidth={2.4} />
+                              </button>
+                              <button
+                                className="w-10 h-10 inline-flex items-center justify-center rounded-md bg-red-600 text-white hover:bg-red-700"
+                                title="Obriši karticu"
+                                aria-label={`Obriši pošiljku #${a.id}`}
+                                onClick={async () => {
+                                  const yes = window.confirm(`Da li sigurno želiš da obrišeš pošiljku #${a.id}?`);
+                                  if (!yes) return;
+                                  // optimistično uklanjanje iz liste
+                                  setArrivals(prev => prev.filter(it => it.id !== a.id));
+                                  try {
+                                    await httpJSON(`/api/arrivals/${a.id}`, { method: "DELETE" });
+                                    try {
+                                      // obavijest
+                                      pushNotif(`Obrisana pošiljka #${a.id}${a.supplier ? " – " + a.supplier : ""}`);
+                                    } catch {}
+                                  } catch (e: any) {
+                                    // vrati stavku ako je došlo do greške
+                                    setArrivals(prev => [...prev, a].sort((x, y) => x.id - y.id));
+                                    console.error("Brisanje nije uspjelo:", e?.message || e);
+                                    alert(`Brisanje nije uspjelo.\n${e?.message || e}`);
+                                  }
+                                }}
+                              >
+                                <Trash2 size={24} strokeWidth={2.4} />
                               </button>
                             </div>
                             <div className="flex items-center gap-1 text-sm opacity-80" title="Broj fajlova">
                               <FileIcon size={16} />
-                              <span>{a.files?.length || 0}</span>
+                              <span>{(a as any).files_count ?? (Array.isArray(a.files) ? a.files.length : 0)}</span>
                             </div>
                           </div>
                         </div>
@@ -394,8 +635,37 @@ export default function ArrivalsPage() {
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
         arrival={active}
+        // Provide the same locations as in the filter (without the empty option)
+        // @ts-expect-error ArrivalModal will accept this prop; typing will be added in that file next
+        locations={allLocationValues}
+        // Full location option objects (labels + values) for the dropdown
+        // @ts-expect-error ArrivalModal will accept this prop; typing will be added in that file next
+        locationOptions={locationOptions.filter(o => o.v)}
+        // Provide responsible people options used in the dropdown
+        // @ts-expect-error ArrivalModal will accept this prop; typing will be added in that file next
+        responsibles={responsibleOptions}
         onSaved={(upd) => {
           setArrivals(prev => prev.map(x => x.id === upd.id ? { ...x, ...upd } : x));
+          // Persist responsible override if present in the saved payload/response
+          try {
+            const r = (upd as any).responsible || (upd as any).assignee_name || (upd as any).assignee || "";
+            if (r && String(r).trim() !== "") {
+              const overridesRaw3 = localStorage.getItem("arrivalResponsibleOverrides");
+              const existing3: Record<string, string> = overridesRaw3 ? JSON.parse(overridesRaw3) : {};
+              existing3[String(upd.id)] = String(r);
+              localStorage.setItem("arrivalResponsibleOverrides", JSON.stringify(existing3));
+            }
+          } catch {}
+          // Persist location override if present in the saved payload/response
+          try {
+            const loc = (upd as any).location || (upd as any).place || "";
+            if (loc && String(loc).trim() !== "") {
+              const locRaw3 = localStorage.getItem("arrivalLocationOverrides");
+              const locExisting3: Record<string, string> = locRaw3 ? JSON.parse(locRaw3) : {};
+              locExisting3[String(upd.id)] = String(loc);
+              localStorage.setItem("arrivalLocationOverrides", JSON.stringify(locExisting3));
+            }
+          } catch {}
           try {
             if (!active) {
               pushNotif(`Kreirana nova pošiljka #${upd.id}${upd.supplier ? " – " + upd.supplier : ""}`);
