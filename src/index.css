@@ -187,14 +187,17 @@ input:focus, select:focus, textarea:focus{
 /* Dugmad (sa starim nijansama) */
 button{
   border:0;
-  background:hsl(var(--primary));
-  color:hsl(var(--primary-foreground));
   padding:10px 14px;
   border-radius:6px;
   cursor:pointer;
   font-weight: 600;
   transition: opacity .15s ease, transform .02s ease, background-color .2s ease;
   box-shadow: none;
+}
+/* Apply default colors only if the element does NOT already use a Tailwind bg- utility. */
+button:not([class*="bg-"]){
+  background:hsl(var(--primary));
+  color:hsl(var(--primary-foreground));
 }
 button:hover{ opacity:.92; }
 button:active{ transform: translateY(1px); }

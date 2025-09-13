@@ -835,14 +835,128 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
     fileInputRef.current?.click();
   }
 
-  function onPreview(f: string) {
-    // Najčešći backend patterni – probaj nekoliko ruta
-    const tries = [
-      `${API_BASE}/api/files/${encodeURIComponent(f)}`,
-      `${API_BASE}/files/${encodeURIComponent(f)}`,
-      `${API_BASE}/uploads/${encodeURIComponent(f)}`,
-    ];
-    window.open(tries[0], "_blank", "noopener,noreferrer");
+  // Pregled fajla – proba više ruta, uključujući ID-scope, i fallback na GET ako HEAD nije podržan
+  async function onPreview(f: string) {
+    const id = arrival?.id ?? form?.id;
+
+    const isFullUrl = (s: string) => /^https?:\/\//i.test(s);
+    const isPath = (s: string) => s.startsWith("/");
+    const isStaticPath = (u: string) => /\/(files|uploads)\//.test(u);
+
+    function buildPreviewUrls(name: string): string[] {
+      const raw = String(name || "").trim();
+      // If it's already a URL or app-relative path, just try it directly (and ?inline=1)
+      if (isFullUrl(raw) || isPath(raw)) {
+        const u = raw;
+        const withInline = u.includes("?") ? `${u}&inline=1` : `${u}?inline=1`;
+        // Avoid doubling /files if user passed a path already containing /files
+        return [u, withInline];
+      }
+      const enc = encodeURIComponent(raw);
+      const idScoped = id
+        ? [
+            `${API_BASE}/api/arrivals/${id}/files/${enc}`,
+            `${API_BASE}/api/arrivals/${id}/files/${enc}?inline=1`,
+          ]
+        : [];
+      return [
+        ...idScoped,
+        `${API_BASE}/api/files/${enc}`,
+        `${API_BASE}/api/files/${enc}?inline=1`,
+        // NOTE: keep these app-relative so the Vite proxy can handle CORS for us in dev
+        `/files/${enc}`,
+        `/files/${enc}?inline=1`,
+        `/uploads/${enc}`,
+        `/uploads/${enc}?inline=1`,
+      ].filter(Boolean);
+    }
+
+    async function openFirstReachable(urls: string[]) {
+      for (const u of urls) {
+        try {
+          // Static paths often 405 on HEAD and use wildcard CORS; do NOT send credentials or auth.
+          if (isStaticPath(u)) {
+            // Try to open directly without probing to avoid CORS preflight issues.
+            window.open(u, "_blank", "noopener,noreferrer");
+            return true;
+          }
+          // For API-scoped URLs keep auth and credentials
+          let res = await fetch(u, { method: "HEAD", credentials: "include", headers: { ...authHeaders() } });
+          if (res.ok) {
+            window.open(u, "_blank", "noopener,noreferrer");
+            return true;
+          }
+          if (res.status === 405) {
+            res = await fetch(u, {
+              method: "GET",
+              credentials: "include",
+              headers: {
+                Accept: "application/pdf,image/*,text/plain,application/octet-stream",
+                ...authHeaders(),
+              } as Record<string, string>,
+            });
+            if (res.ok) {
+              window.open(u, "_blank", "noopener,noreferrer");
+              return true;
+            }
+          }
+        } catch {}
+      }
+      return false;
+    }
+
+    const ok = await openFirstReachable(buildPreviewUrls(f));
+    if (!ok) {
+      alert('Pregled nije dostupan za ovaj fajl. Pokušajte "Preuzmi".');
+    }
+  }
+
+  // Preuzimanje fajla – proba više ruta i ?download=1 fallback
+  async function onDownload(f: string) {
+    const id = arrival?.id ?? form?.id;
+    const raw = String(f || "");
+    const isFullUrl = /^https?:\/\//i.test(raw);
+    const isPath = raw.startsWith("/");
+    const isStaticPath = (u: string) => /\/(files|uploads)\//.test(u);
+
+    // If user already provided a URL/path, just open it (prefer ?download=1)
+    if (isFullUrl || isPath) {
+      const u = raw.includes("?") ? `${raw}&download=1` : `${raw}?download=1`;
+      window.open(u, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    const enc = encodeURIComponent(raw);
+    const candidates = [
+      ...(id
+        ? [
+            `${API_BASE}/api/arrivals/${id}/files/${enc}?download=1`,
+            `${API_BASE}/api/arrivals/${id}/files/${enc}`,
+          ]
+        : []),
+      `${API_BASE}/api/files/${enc}?download=1`,
+      `${API_BASE}/api/files/${enc}`,
+      // app-relative (proxy-friendly) static paths
+      `/files/${enc}?download=1`,
+      `/files/${enc}`,
+      `/uploads/${enc}`,
+    ].filter(Boolean);
+
+    for (const u of candidates) {
+      try {
+        if (isStaticPath(u)) {
+          // Open static directly (no credentials) to avoid CORS issues
+          window.open(u, "_blank", "noopener,noreferrer");
+          return;
+        }
+        const res = await fetch(u, { method: "HEAD", credentials: "include", headers: { ...authHeaders() } });
+        if (res.ok || res.status === 405) {
+          window.open(u, "_blank", "noopener,noreferrer");
+          return;
+        }
+      } catch {}
+    }
+    alert("Preuzimanje nije dostupno za ovaj fajl.");
   }
 
   async function onDeleteFile(f: string, idx: number) {
@@ -1215,7 +1329,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
                                     title="Preuzmi"
                                     aria-label="Preuzmi"
                                     disabled={!url}
-                                    onClick={() => url && window.open(url, "_blank", "noopener,noreferrer")}
+                                    onClick={() => url && onDownload(url)}
                                   >
                                     <Download size={16} />
                                   </button>

@@ -392,7 +392,7 @@ export default function ArrivalCard({ arrival, onDetails, onUploadFiles, onDelet
           </div>
           {/* Delete button (red) */}
           <button
-            className="inline-flex w-10 h-10 items-center justify-center rounded-md !bg-red-600 hover:!bg-red-700 text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+            className="inline-flex w-10 h-10 items-center justify-center rounded-md bg-red-600 hover:bg-red-700 text-white focus:outline-none focus:ring-2 focus:ring-red-500"
             title="Obriši"
             aria-label="Obriši karticu"
             onClick={() => {
@@ -410,7 +410,7 @@ export default function ArrivalCard({ arrival, onDetails, onUploadFiles, onDelet
             }}
             type="button"
           >
-            <Trash size={24} />
+            <Trash size={28} />
           </button>
         </div>
       </div>
