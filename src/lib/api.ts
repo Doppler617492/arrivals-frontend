@@ -115,7 +115,16 @@ const defaultBase = "http://localhost:8081";
 const base = ((import.meta as any).env?.VITE_API_BASE ?? defaultBase).replace(/\/$/, "");
 
 export function getToken() {
-  try { return localStorage.getItem("token"); } catch { return null; }
+  try {
+    const local = localStorage.getItem("token") || localStorage.getItem("access_token");
+    if (local) return local;
+  } catch {}
+  try {
+    // Fallback to sessionStorage for non-remembered sessions
+    return sessionStorage.getItem("token") || sessionStorage.getItem("access_token");
+  } catch {
+    return null;
+  }
 }
 
 export function setToken(value: string | null) {

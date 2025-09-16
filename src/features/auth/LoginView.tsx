@@ -9,6 +9,10 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
   const [password, setPassword] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
+  const [capsOn, setCapsOn] = React.useState<boolean>(false);
+  const [showPass, setShowPass] = React.useState<boolean>(false);
+  const [remember, setRemember] = React.useState<boolean>(true);
+  const emailValid = /.+@.+\..+/.test(email);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -17,10 +21,13 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
     setLoading(true);
     try {
       const data = await apiPOST<{ access_token: string; user?: User }>("/auth/login", { email, password });
-      // Save token under both "token" and "access_token" for compatibility
-      setToken(data.access_token);
-      localStorage.setItem("token", data.access_token);
-      localStorage.setItem("access_token", data.access_token);
+      // Save token to chosen storage (remember -> localStorage, else sessionStorage)
+      setToken(data.access_token, remember);
+      try {
+        const storage: Storage = remember ? localStorage : sessionStorage;
+        storage.setItem("token", data.access_token);
+        storage.setItem("access_token", data.access_token);
+      } catch {}
       // Ako backend već vrati user-a, iskoristi to; u suprotnom pozovi /auth/me
       const user = data.user ?? (await apiGET<{ user: User }>("/auth/me", true)).user;
       onLoggedIn(user);
@@ -159,16 +166,74 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
               <rect x="5" y="11" width="14" height="8" rx="2" strokeWidth="1.8"></rect>
               <path d="M12 11V7a4 4 0 0 1 4-4" strokeWidth="1.8" strokeLinecap="round"></path>
             </svg>
-            <input id="login-pass" className="inputx with-ico" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Vaša lozinka" autoComplete="current-password" required disabled={loading} aria-label="Lozinka" />
+            <input
+              id="login-pass"
+              className="inputx with-ico"
+              type={showPass ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyUp={(e) => setCapsOn((e as any).getModifierState && (e as any).getModifierState("CapsLock"))}
+              placeholder="Vaša lozinka"
+              autoComplete="current-password"
+              required
+              disabled={loading}
+              aria-label="Lozinka"
+              aria-describedby="caps-hint"
+            />
+            <button type="button" aria-label={showPass ? "Sakrij lozinku" : "Prikaži lozinku"} onClick={() => setShowPass(s => !s)}
+              style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)', background:'transparent', border:'none', cursor:'pointer', fontSize:12, color:'#334155' }}>
+              {showPass ? 'Sakrij' : 'Prikaži'}
+            </button>
           </div>
+          {capsOn && (
+            <div id="caps-hint" role="status" aria-live="polite" style={{ color:'#b91c1c', fontSize:12 }}>
+              Upozorenje: Caps Lock je uključen.
+            </div>
+          )}
           <div className="links-row">
             <a className="linkx" href="/forgot">Zaboravljena lozinka?</a>
             <span style={{fontSize:12, opacity:.75}}>
               Nemate nalog? <a className="linkx" href="/register">Registrujte se</a>
             </span>
           </div>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+            <label style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize:12 }}>
+              <input type="checkbox" checked={remember} onChange={(e)=>setRemember(e.currentTarget.checked)} />
+              Ostani prijavljen
+            </label>
+            {!emailValid && email.length > 0 && (
+              <span style={{ color:'#b91c1c', fontSize:12 }}>Neispravan email format</span>
+            )}
+          </div>
           {err && <div style={styles.error} role="alert" aria-live="polite">{err}</div>}
-          <button disabled={loading} className="primaryx" type="submit">{loading ? "Učitavam..." : "Uloguj se"}</button>
+          <button disabled={loading || !emailValid} className="primaryx" type="submit">{loading ? "Učitavam..." : "Uloguj se"}</button>
+          <div className="divider" />
+          <div style={{ display:'grid', gap:8 }}>
+            <button type="button" className="btn ghost" aria-label="Prijava preko Google" disabled title="Uskoro">
+              <span style={{ display:'inline-flex', alignItems:'center', gap:8 }}>
+                {/* Google G icon */}
+                <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+                  <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.6-6 8-11.3 8-6.9 0-12.5-5.6-12.5-12.5S17.1 11 24 11c3.2 0 6.1 1.2 8.3 3.2l5.7-5.7C34 4.9 29.3 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21c10.5 0 20-7.6 20-21 0-1.2-.1-2.3-.4-3.5z"/>
+                  <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16.1 18.9 13 24 13c3.2 0 6.1 1.2 8.3 3.2l5.7-5.7C34 4.9 29.3 3 24 3 16.1 3 9.1 7.1 6.3 14.7z"/>
+                  <path fill="#4CAF50" d="M24 45c5.2 0 10-1.7 13.8-4.7l-6.4-5.2c-2 1.4-4.6 2.2-7.4 2.2-5.3 0-9.7-3.4-11.3-8l-6.6 5.1C9 40.8 15.9 45 24 45z"/>
+                  <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-0.8 2.3-2.2 4.2-4.1 5.6l6.4 5.2c-0.5 0.4 6.5-4.7 6.5-14.8 0-1.2-0.1-2.3-0.5-3.5z"/>
+                </svg>
+                Nastavi sa Google
+              </span>
+            </button>
+            <button type="button" className="btn ghost" aria-label="Prijava preko Microsoft" disabled title="Uskoro">
+              <span style={{ display:'inline-flex', alignItems:'center', gap:8 }}>
+                {/* Microsoft squares icon */}
+                <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="2" y="2" width="9" height="9" fill="#F25022"/>
+                  <rect x="13" y="2" width="9" height="9" fill="#7FBA00"/>
+                  <rect x="2" y="13" width="9" height="9" fill="#00A4EF"/>
+                  <rect x="13" y="13" width="9" height="9" fill="#FFB900"/>
+                </svg>
+                Nastavi sa Microsoft
+              </span>
+            </button>
+          </div>
           <div className="footer-note">© {new Date().getFullYear()} Cungu • Created by Atdhe Tabaku</div>
         </div>
       </form>

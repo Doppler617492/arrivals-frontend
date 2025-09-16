@@ -5,7 +5,22 @@ export const API_BASE = RAW_BASE.replace(/\/+$/, ""); // bez završnog '/'
 export const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
 
 export function getToken() { return localStorage.getItem("token"); }
-export function setToken(t: string | null) { !t ? localStorage.removeItem("token") : localStorage.setItem("token", t); }
+export function setToken(t: string | null, remember: boolean = true) {
+  if (!t) {
+    try { localStorage.removeItem("token"); localStorage.removeItem("access_token"); } catch {}
+    try { sessionStorage.removeItem("token"); sessionStorage.removeItem("access_token"); } catch {}
+    return;
+  }
+  try {
+    if (remember) {
+      localStorage.setItem("token", t);
+      localStorage.setItem("access_token", t);
+    } else {
+      sessionStorage.setItem("token", t);
+      sessionStorage.setItem("access_token", t);
+    }
+  } catch {}
+}
 
 export function qs(params: Record<string, any>) {
   const u = new URLSearchParams();

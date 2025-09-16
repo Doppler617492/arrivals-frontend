@@ -356,6 +356,10 @@ export default function ContainersPage() {
   // show/hide filters
   const [filtersOpen, setFiltersOpen] = useState<boolean>(true);
 
+  // ---- pagination ----
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(20); // default 20; user-adjustable
+
   // ---- filters & sorting (page header) ----
   const [filterSupplier, setFilterSupplier] = useState<string>(""); // empty = all
   const [filterPaid, setFilterPaid] = useState<"all" | "paid" | "unpaid">("all");
@@ -612,11 +616,23 @@ export default function ContainersPage() {
     return list;
   }, [rows, searchText, filterSupplier, filterPaid, filterFrom, filterTo, filterDateField, sortBy, sortDir]);
 
-  const totalSumVisible = React.useMemo(() => sumBy(filteredRows, "total"), [filteredRows]);
-  const depositSumVisible = React.useMemo(() => sumBy(filteredRows, "deposit"), [filteredRows]);
-  const balanceSumVisible = React.useMemo(() => sumBy(filteredRows, "balance"), [filteredRows]);
+  // Compute paging
+  const totalPages = Math.max(1, Math.ceil(Math.max(filteredRows.length, 1) / pageSize));
+  useEffect(() => {
+    // Keep current page within bounds when filters change
+    if (page > totalPages) setPage(totalPages);
+    if (page < 1) setPage(1);
+  }, [totalPages]);
+  const firstIdx = (page - 1) * pageSize;
+  const lastIdx = firstIdx + pageSize;
+  const pagedRows = React.useMemo(() => filteredRows.slice(firstIdx, lastIdx), [filteredRows, firstIdx, lastIdx]);
+
+  // Footer sums – for the current page only
+  const totalSumVisible = React.useMemo(() => sumBy(pagedRows, "total"), [pagedRows]);
+  const depositSumVisible = React.useMemo(() => sumBy(pagedRows, "deposit"), [pagedRows]);
+  const balanceSumVisible = React.useMemo(() => sumBy(pagedRows, "balance"), [pagedRows]);
   // When a row is marked as paid, its balance should not count toward the footer total
-  const paidBalanceSumVisible = React.useMemo(() => sumBy(filteredRows.filter(r => !!r.paid), "balance"), [filteredRows]);
+  const paidBalanceSumVisible = React.useMemo(() => sumBy(pagedRows.filter(r => !!r.paid), "balance"), [pagedRows]);
   const netTotalSumVisible = React.useMemo(() => totalSumVisible - paidBalanceSumVisible, [totalSumVisible, paidBalanceSumVisible]);
 
   /* -------- files -------- */
@@ -1108,14 +1124,14 @@ export default function ContainersPage() {
     );
 
     try {
-      // Minimal PATCH that your backend accepts
-      await patchContainer(row.id, { placeno: nextPaid, paid: nextPaid });
-
-      // Optionally, if backend also recalculates balance server-side and you want to sync:
-      // const fresh = await api.getContainer(row.id as any);
-      // if (fresh) {
-      //   setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, ...fresh, paid: !!fresh.paid } : r)));
-      // }
+      // Use dedicated endpoint to toggle paid, backend also updates status/balance
+      await api.setContainerPaid(row.id as any, nextPaid);
+      // Sync from server to reflect any recomputed fields
+      const fresh = await api.getContainer(row.id as any);
+      if ((fresh as any)?.ok && (fresh as any).data) {
+        const d = (fresh as any).data as any;
+        setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, ...d, paid: !!(d.paid ?? d.placeno) } : r)));
+      }
     } catch (e) {
       // ---- revert on error
       setRows((prev) =>
@@ -1582,6 +1598,35 @@ export default function ContainersPage() {
         {loading ? (
           <p style={{ padding: 12 }}>Učitavanje…</p>
         ) : (
+          <>
+          {/* Pagination controls (top) */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={{ fontSize: 12, color: '#4b5563' }}>Redova po strani:</label>
+              <select
+                value={pageSize}
+                onChange={(e)=>{ setPageSize(Number(e.target.value)); setPage(1); }}
+                className="cell-input"
+                style={{ width: 90, height: 28 }}
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button type="button" className="btn small ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>
+              Prethodna
+            </button>
+            <span className="al-center" style={{ alignSelf: "center", fontSize: 12 }}>
+              Stranica {page} / {totalPages}
+            </span>
+            <button type="button" className="btn small" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
+              Sledeća
+            </button>
+            </div>
+          </div>
+
           <table
             className="table responsive"
             style={{ tableLayout: "fixed", width: "100%" }}
@@ -1620,7 +1665,7 @@ export default function ContainersPage() {
               {/* Balans */}
               <col style={{ width: "6%" }} />
               {/* Plaćanje */}
-              <col style={{ width: "5%" }} />
+              <col style={{ width: "110px" }} />
               {/* Akcije */}
               <col style={{ width: "180px" }} />
             </colgroup>
@@ -1630,20 +1675,25 @@ export default function ContainersPage() {
                   <input
                     type="checkbox"
                     aria-label="Selektuj sve vidljive"
-                    checked={filteredRows.length > 0 && filteredRows.every(r => selectedIds.has(r.id))}
+                    checked={pagedRows.length > 0 && pagedRows.every(r => selectedIds.has(r.id))}
                     onChange={(e) => {
                       const checked = e.currentTarget.checked;
                       setSelectedIds(prev => {
-                        if (!checked) return new Set();
+                        if (!checked) {
+                          // Unselect only currently visible rows
+                          const next = new Set(prev);
+                          pagedRows.forEach(r => next.delete(r.id));
+                          return next;
+                        }
                         const next = new Set(prev);
-                        filteredRows.forEach(r => next.add(r.id));
+                        pagedRows.forEach(r => next.add(r.id));
                         return next;
                       });
                     }}
                     ref={(el) => {
                       if (!el) return;
-                      const someSelected = filteredRows.some(r => selectedIds.has(r.id));
-                      const allSelected = filteredRows.length > 0 && filteredRows.every(r => selectedIds.has(r.id));
+                      const someSelected = pagedRows.some(r => selectedIds.has(r.id));
+                      const allSelected = pagedRows.length > 0 && pagedRows.every(r => selectedIds.has(r.id));
                       el.indeterminate = someSelected && !allSelected;
                     }}
                   />
@@ -1714,7 +1764,8 @@ export default function ContainersPage() {
                   <td className="al-right" style={{ textAlign: "right" }}>
                     <button
                       type="button"
-                      className={`btn xsmall pill ${newRow.paid ? "success" : "danger"}`}
+                      className={`status-button ${newRow.paid ? "status-paid" : "status-unpaid"}`}
+                      title="Promijeni status plaćanja"
                       onClick={() => setNewRow((s) => ({ ...s, paid: !s.paid }))}
                     >
                       {newRow.paid ? "Plaćeno" : "Nije plaćeno"}
@@ -1759,7 +1810,7 @@ export default function ContainersPage() {
                 </tr>
               )}
 
-              {filteredRows.map((r) => (
+              {pagedRows.map((r) => (
                 <tr key={r.id}>
                   <td className="al-center">
                     <input
@@ -1832,7 +1883,7 @@ export default function ContainersPage() {
                   <td className="al-right" style={{ textAlign: "right" }}>
                     <button
                       type="button"
-                      className={`btn xsmall pill ${r.paid ? "success" : "danger"}`}
+                      className={`status-button ${r.paid ? "status-paid" : "status-unpaid"}`}
                       title="Promijeni status plaćanja"
                       onClick={() => togglePaid(r)}
                       disabled={!!toggling[r.id]}
@@ -1879,6 +1930,35 @@ export default function ContainersPage() {
               </tr>
             </tfoot>
           </table>
+
+          {/* Pagination controls (bottom) */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={{ fontSize: 12, color: '#4b5563' }}>Redova po strani:</label>
+              <select
+                value={pageSize}
+                onChange={(e)=>{ setPageSize(Number(e.target.value)); setPage(1); }}
+                className="cell-input"
+                style={{ width: 90, height: 28 }}
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button type="button" className="btn small ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>
+              Prethodna
+            </button>
+            <span className="al-center" style={{ alignSelf: "center", fontSize: 12 }}>
+              Stranica {page} / {totalPages}
+            </span>
+            <button type="button" className="btn small" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
+              Sledeća
+            </button>
+            </div>
+          </div>
+          </>
         )}
       </div>
 
