@@ -22,6 +22,8 @@ type User = {
   tasks_today?: number;
 };
 
+type ProfileTabProps = { user: User; onSaved: () => void };
+
 const roleColors: Record<Role, string> = {
   admin: 'magenta', manager: 'geekblue', magacioner: 'green', komercijalista: 'gold', viewer: 'default', external: 'purple'
 };
@@ -388,7 +390,7 @@ export default function UsersPage() {
   );
 }
 
-function ProfileTab(props: { user: User; onSaved: ()=>void }) {
+function ProfileTab(props: ProfileTabProps) {
   const { user, onSaved } = props;
   const [form, setForm] = React.useState({ name: user.name || '', phone: user.phone || '', type: user.type || 'internal', status: user.status, role: user.role });
   async function save() {
