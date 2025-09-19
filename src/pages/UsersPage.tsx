@@ -1,8 +1,10 @@
 import React from 'react';
 import { apiGET, apiPOST, apiPATCH, apiUPLOAD, apiDELETE } from '../api/client';
-import { Table, Tag, Drawer, Tabs, Button, Input, Select, Space, Dropdown, Segmented, DatePicker, Badge, Card } from 'antd';
+import { Table, Tag, Drawer, Tabs, Button, Input, Select, Space, Dropdown, Segmented, DatePicker, Badge, Card, Popover, Upload, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DownOutlined, EyeOutlined, EditOutlined, RedoOutlined, StopOutlined, DeleteOutlined, LockOutlined, UnlockOutlined, MoreOutlined, SearchOutlined } from '@ant-design/icons';
+import { DownOutlined, EyeOutlined, EditOutlined, RedoOutlined, StopOutlined, DeleteOutlined, LockOutlined, UnlockOutlined, MoreOutlined, SearchOutlined, FilterOutlined, SaveOutlined, ArrowUpOutlined, ArrowDownOutlined, UploadOutlined } from '@ant-design/icons';
+import { t } from '../lib/i18n';
+import { ProfileTab, RBAC, Activity, Sessions, Productivity, NotesFiles } from './UsersPage.parts';
 
 type Role = 'admin' | 'manager' | 'magacioner' | 'komercijalista' | 'viewer' | 'external';
 type Status = 'active' | 'invited' | 'suspended' | 'locked';
@@ -45,6 +47,12 @@ export default function UsersPage() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [colVis, setColVis] = React.useState<Record<string, boolean>>(()=>{ try { return JSON.parse(localStorage.getItem('users_cols')||'{}'); } catch { return {}; } });
   const [advanced, setAdvanced] = React.useState<{ locations:string; createdFrom?: string; createdTo?: string; lastLoginFrom?: string; lastLoginTo?: string; failedLoginsGte?: number }>({ locations:'', createdFrom: undefined, createdTo: undefined, lastLoginFrom: undefined, lastLoginTo: undefined, failedLoginsGte: undefined });
+  const [views, setViews] = React.useState<Array<{ name:string; data:any }>>(()=>{ try { return JSON.parse(localStorage.getItem('users_views')||'[]'); } catch { return []; } });
+  const [currentView, setCurrentView] = React.useState<string | undefined>(undefined);
+  const [colOrder, setColOrder] = React.useState<string[]>(()=>{ try { return JSON.parse(localStorage.getItem('users_col_order')||'[]'); } catch { return []; } });
+  const [importOpen, setImportOpen] = React.useState(false);
+  const [importReport, setImportReport] = React.useState<any | null>(null);
+  const [importFile, setImportFile] = React.useState<File | null>(null);
 
   const fetchList = React.useCallback(async () => {
     setLoading(true);
@@ -116,7 +124,7 @@ export default function UsersPage() {
     return rows.filter(r => [r.name, r.email, r.username, r.role, r.status].filter(Boolean).join(' ').toLowerCase().includes(term));
   }, [rows, q]);
 
-  const columns: ColumnsType<User> = [
+  let columns: ColumnsType<User> = [
     {
       title: 'Korisnik', dataIndex: 'name', key: 'name', hidden: colVis.name === false,
       render: (_, r) => (
@@ -212,6 +220,15 @@ export default function UsersPage() {
     }
   ];
 
+  // Apply saved column order if present
+  if (colOrder && colOrder.length) {
+    const map: Record<string, any> = {};
+    (columns as any[]).forEach((c:any)=> { if (c.key) map[c.key] = c; });
+    const ordered = colOrder.map(k => map[k]).filter(Boolean);
+    const rest = (columns as any[]).filter((c:any) => !colOrder.includes(c.key as string));
+    columns = [...ordered, ...rest] as any;
+  }
+
   const selected = rows.filter(r => selectedKeys.includes(r.id));
   const kpiActive7d = React.useMemo(() => rows.filter(r => r.last_activity_at && (range!=='24h')).length, [rows, range]);
   const avgProcessed7d = React.useMemo(() => {
@@ -227,14 +244,174 @@ export default function UsersPage() {
   return (
     <div style={{ background:'#f5f7fb' }}>
       <div style={{ maxWidth: 1320, margin: '0 auto', padding: '24px 24px 40px' }}>
+        {/* Header */}
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: 16 }}>
-          <div style={{ fontSize: 26, fontWeight: 600 }}>User Management</div>
-          <Button type="primary" size="large" onClick={()=> setCreateOpen(true)}>Add New User</Button>
+          <div style={{ fontSize: 26, fontWeight: 600 }}>{t('user_management') || 'User Management'}</div>
+          <Space>
+            <Dropdown
+              menu={{ items: [
+                { key:'save', icon:<SaveOutlined />, label: t('save_view') || 'Save View', onClick: ()=> { const name = prompt('View name'); if (!name) return; const data = { q, roleFilter, statusFilter, range, density, advanced, colVis, colOrder }; const next = [...views.filter(v=>v.name!==name), { name, data }]; setViews(next); localStorage.setItem('users_views', JSON.stringify(next)); setCurrentView(name); } },
+                ...views.map(v=> ({ key:`view-${v.name}`, label: v.name, onClick: ()=> { const d=v.data; setQ(d.q); setRoleFilter(d.roleFilter); setStatusFilter(d.statusFilter); setRange(d.range); setDensity(d.density); setAdvanced(d.advanced); setColVis(d.colVis); setColOrder(d.colOrder || []); setCurrentView(v.name); setPage(1); fetchList(); } })),
+              ]}}
+            >
+              <Button aria-label="Saved views">{t('saved_views') || 'Saved Views'}</Button>
+            </Dropdown>
+            <Button type="primary" size="large" onClick={()=> setCreateOpen(true)} aria-label="Add new user">{t('add_new_user') || 'Add New User'}</Button>
+          </Space>
         </div>
+        {/* Search & Filters */}
         <div style={{ display:'flex', gap: 12, alignItems:'center', marginBottom: 16 }}>
-          <Input size="large" placeholder="Search users…" prefix={<SearchOutlined />} value={q} onChange={(e)=> setQ(e.target.value)} />
-          <Button onClick={()=> setFiltersOpen(true)}>Filters {activeFilterCount? <Badge count={activeFilterCount} />: null}</Button>
+          <Input size="large" placeholder={t('search_users') || 'Search users…'} prefix={<SearchOutlined />} aria-label="Search users" value={q} onChange={(e)=> setQ(e.target.value)} />
+          <Popover
+            content={
+              <div style={{ width: 340, padding: 12 }}>
+                <div className="grid gap-3">
+                  <Input size="middle" placeholder="Search by name…" aria-label="Search in filters" value={q} onChange={(e)=> setQ(e.target.value)} />
+                  <div>
+                    <div className="text-xs opacity-70 mb-1">{t('role') || 'Role'}</div>
+                    <Space wrap>
+                      {['admin','manager','magacioner','komercijalista','viewer','external'].map(r => (
+                        <label key={r} style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+                          <input type="checkbox" checked={!!roleFilter?.includes(r as any)} onChange={(e)=> {
+                            const has = !!roleFilter?.includes(r as any);
+                            setRoleFilter((prev)=> {
+                              const arr = prev? [...prev]: [] as any[];
+                              if (e.target.checked && !has) arr.push(r as any);
+                              if (!e.target.checked && has) return arr.filter(x=>x!==r);
+                              return arr;
+                            })
+                          }} />
+                          {r}
+                        </label>
+                      ))}
+                    </Space>
+                  </div>
+                  <div>
+                    <div className="text-xs opacity-70 mb-1">{t('status') || 'Status'}</div>
+                    <Space wrap>
+                      {['active','invited','suspended','locked'].map(s => (
+                        <label key={s} style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+                          <input type="checkbox" checked={statusFilter===s} onChange={(e)=> setStatusFilter(e.target.checked? s as any : undefined)} />
+                          {s}
+                        </label>
+                      ))}
+                    </Space>
+                  </div>
+                  <label className="grid gap-1"><span className="text-xs opacity-70">{t('locations_csv') || 'Locations (CSV)'}</span><Input aria-label="Locations CSV" value={advanced.locations} onChange={(e)=> setAdvanced(a=> ({...a, locations: e.target.value}))} /></label>
+                  <div className="grid gap-1"><span className="text-xs opacity-70">{t('created') || 'Created'}</span>
+                    <Space>
+                      <DatePicker placeholder="Od" onChange={(d)=> setAdvanced(a=> ({...a, createdFrom: d? d.toISOString(): undefined}))} />
+                      <DatePicker placeholder="Do" onChange={(d)=> setAdvanced(a=> ({...a, createdTo: d? d.toISOString(): undefined}))} />
+                    </Space>
+                  </div>
+                  <div className="grid gap-1"><span className="text-xs opacity-70">{t('last_login') || 'Last login'}</span>
+                    <Space>
+                      <DatePicker placeholder="Od" onChange={(d)=> setAdvanced(a=> ({...a, lastLoginFrom: d? d.toISOString(): undefined}))} />
+                      <DatePicker placeholder="Do" onChange={(d)=> setAdvanced(a=> ({...a, lastLoginTo: d? d.toISOString(): undefined}))} />
+                    </Space>
+                  </div>
+                  <label className="grid gap-1"><span className="text-xs opacity-70">{t('failed_logins') || 'Failed logins ≥'}</span><Input aria-label="Failed logins greater or equal" type="number" value={advanced.failedLoginsGte as any} onChange={(e)=> setAdvanced(a=> ({...a, failedLoginsGte: Number(e.target.value)}))} /></label>
+                  <div className="flex justify-end gap-2">
+                    <Button onClick={()=> { setAdvanced({ locations:'', createdFrom: undefined, createdTo: undefined, lastLoginFrom: undefined, lastLoginTo: undefined, failedLoginsGte: undefined }); setRoleFilter(undefined); setStatusFilter(undefined); setQ(''); }}>{t('reset') || 'Reset'}</Button>
+                    <Button type="primary" onClick={()=> { setPage(1); fetchList(); }}>{t('apply_filters') || 'Apply Filters'}</Button>
+                  </div>
+                </div>
+              </div>
+            }
+            trigger="click"
+            placement="bottomRight"
+          >
+            <Button size="large" icon={<FilterOutlined />} aria-label="Open filters">{t('filters') || 'Filters'} {activeFilterCount? <Badge count={activeFilterCount} />: null}</Button>
+          </Popover>
+          <Button icon={<UploadOutlined />} onClick={()=> { setImportOpen(true); setImportReport(null); }} aria-label="Import users">{t('import') || 'Import'}</Button>
         </div>
+        {/* KPI */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,minmax(0,1fr))', gap: 12, marginBottom: 16 }}>
+          <Card><div className="text-xs" style={{ color:'#6B7280' }}>Aktivni korisnici (7d)</div><div style={{ fontSize:24, fontWeight:600 }}>{kpiActive7d}</div></Card>
+          <Card><div className="text-xs" style={{ color:'#6B7280' }}>Pros. # obrađenih (7d)</div><div style={{ fontSize:24, fontWeight:600 }}>{avgProcessed7d}</div></Card>
+          <Card><div className="text-xs" style={{ color:'#6B7280' }}>% on-time (7d)</div><div style={{ fontSize:24, fontWeight:600 }}>{onTimePct}%</div></Card>
+          <Card><div className="text-xs" style={{ color:'#6B7280' }}>Otvoreni zadaci danas</div><div style={{ fontSize:24, fontWeight:600 }}>{tasksToday}</div></Card>
+        </div>
+        {/* Table */}
+        <Card style={{ borderRadius:12 }} bodyStyle={{ padding: 0 }}>
+          <Table
+            rowKey="id"
+            size={density}
+            sticky
+            loading={loading}
+            dataSource={filtered}
+            columns={columns}
+            pagination={{ current: page, pageSize, total: total ?? filtered.length, showSizeChanger: true, onChange: (p, ps)=> { setPage(p); setPageSize(ps); } }}
+            rowSelection={{ selectedRowKeys: selectedKeys, onChange: (keys)=> setSelectedKeys(keys as number[]) }}
+            onRow={(r)=> ({ onClick: ()=> setDrawer({ open: true, user: r }) })}
+          />
+        </Card>
+      </div>
+      {/* Filters drawer */}
+      <Drawer title="Filteri" placement="right" width={360} onClose={()=> setFiltersOpen(false)} open={filtersOpen} destroyOnClose>
+        <div className="grid gap-3">
+          <label className="grid gap-1"><span className="text-xs opacity-70">Lokacije (CSV)</span><Input value={advanced.locations} onChange={(e)=> setAdvanced(a=> ({...a, locations: e.target.value}))} /></label>
+          <div className="grid gap-1"><span className="text-xs opacity-70">Kreiran</span>
+            <Space>
+              <DatePicker placeholder="Od" onChange={(d)=> setAdvanced(a=> ({...a, createdFrom: d? d.toISOString(): undefined}))} />
+              <DatePicker placeholder="Do" onChange={(d)=> setAdvanced(a=> ({...a, createdTo: d? d.toISOString(): undefined}))} />
+            </Space>
+          </div>
+          <div className="grid gap-1"><span className="text-xs opacity-70">Zadnja prijava</span>
+            <Space>
+              <DatePicker placeholder="Od" onChange={(d)=> setAdvanced(a=> ({...a, lastLoginFrom: d? d.toISOString(): undefined}))} />
+              <DatePicker placeholder="Do" onChange={(d)=> setAdvanced(a=> ({...a, lastLoginTo: d? d.toISOString(): undefined}))} />
+            </Space>
+          </div>
+          <label className="grid gap-1"><span className="text-xs opacity-70">Neuspjele prijave ≥</span><Input type="number" value={advanced.failedLoginsGte as any} onChange={(e)=> setAdvanced(a=> ({...a, failedLoginsGte: Number(e.target.value)}))} /></label>
+          <div className="flex gap-2">
+            <Button onClick={()=> { setAdvanced({ locations:'', createdFrom: undefined, createdTo: undefined, lastLoginFrom: undefined, lastLoginTo: undefined, failedLoginsGte: undefined }); }}>Reset</Button>
+            <Button type="primary" onClick={()=> { setFiltersOpen(false); setPage(1); fetchList(); }}>Primijeni</Button>
+          </div>
+        </div>
+      </Drawer>
+      {/* Create drawer */}
+      <Drawer title="Novi korisnik" placement="right" width={420} onClose={()=> setCreateOpen(false)} open={createOpen} destroyOnClose>
+        <CreateUser onCreated={()=> { setCreateOpen(false); fetchList(); }} />
+      </Drawer>
+      {/* User drawer */}
+      <Drawer title={drawer.user? drawer.user.name : 'Korisnik'} placement="right" width={520} onClose={()=> setDrawer({ open:false })} open={drawer.open} destroyOnClose>
+        {drawer.user && (
+          <Tabs
+            items={[
+              { key:'profile', label:'Profil', children: <ProfileTab user={drawer.user} onSaved={fetchList} /> },
+              { key:'rbac', label:'Prava', children: <RBAC user={drawer.user} /> },
+              { key:'activity', label:'Aktivnost', children: <Activity user={drawer.user} /> },
+              { key:'sessions', label:'Sesije/Uređaji', children: <Sessions user={drawer.user} /> },
+              { key:'notifications', label:'Notifikacije', children: <NotesFiles user={drawer.user} /> },
+              { key:'productivity', label:'Produktivnost', children: <Productivity user={drawer.user} /> },
+              { key:'notes', label:'Napomene/Prilozi', children: <NotesFiles user={drawer.user} /> },
+            ]}
+          />
+        )}
+      </Drawer>
+      {/* Import drawer */}
+      <Drawer title={t('import') || 'Import'} placement="right" width={420} onClose={()=> { setImportOpen(false); setImportReport(null); setImportFile(null); }} open={importOpen} destroyOnClose>
+        <div className="grid gap-3">
+          <Upload beforeUpload={async (file) => { setImportFile(file as File); const fd = new FormData(); fd.append('file', file); try { const rep = await apiUPLOAD<any>(`/api/users/import?dry_run=1`, fd, true); setImportReport(rep); message.success('Preflight completed'); } catch (e:any) { message.error(e?.message || 'Import failed'); } return false; }}>
+            <Button icon={<UploadOutlined />}>{t('upload_csv') || 'Upload CSV'}</Button>
+          </Upload>
+          {importReport && (
+            <div className="grid gap-2">
+              <div className="font-medium">{t('preflight') || 'Preflight'}</div>
+              <div className="text-sm">{t('rows_created') || 'Rows created'}: {importReport.created} • {t('rows_updated') || 'Rows updated'}: {importReport.updated}</div>
+              {!!(importReport.errors||[]).length && (
+                <div className="text-sm" style={{ color:'#EF4444' }}>{t('errors') || 'Errors'}: {(importReport.errors||[]).length}</div>
+              )}
+              <div>
+                <Button type="primary" disabled={!importFile} onClick={async()=>{ if (!importFile) return; try { const fd = new FormData(); fd.append('file', importFile); const res = await apiUPLOAD<any>(`/api/users/import`, fd, true); message.success(`Imported: created ${res.created}, updated ${res.updated}`); setImportReport(null); setImportFile(null); setImportOpen(false); fetchList(); } catch(e:any) { message.error(e?.message || 'Import failed'); } }}>{t('confirm_import') || 'Confirm Import'}</Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </Drawer>
+    </div>
+  );
         <div className="grid gap-12">
       <div className="grid grid-cols-4 gap-3">
         <div className="rounded-lg bg-white/5 p-4">
