@@ -1,6 +1,6 @@
 import React from 'react';
 import { apiGET, apiPOST, apiPATCH, apiUPLOAD } from '../api/client';
-import { Table, Tag, Drawer, Tabs, Button, Input, Select, Space, Dropdown, Segmented } from 'antd';
+import { Table, Tag, Drawer, Tabs, Button, Input, Select, Space, Dropdown, Segmented, DatePicker, Badge } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DownOutlined } from '@ant-design/icons';
 
@@ -36,18 +36,34 @@ export default function UsersPage() {
   const [statusFilter, setStatusFilter] = React.useState<Status | undefined>(undefined);
   const [range, setRange] = React.useState<'24h' | '7d' | '30d'>('7d');
   const [density, setDensity] = React.useState<'middle' | 'small'>('middle');
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(25);
+  const [total, setTotal] = React.useState<number | undefined>(undefined);
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
+  const [createOpen, setCreateOpen] = React.useState(false);
+  const [colVis, setColVis] = React.useState<Record<string, boolean>>(()=>{ try { return JSON.parse(localStorage.getItem('users_cols')||'{}'); } catch { return {}; } });
+  const [advanced, setAdvanced] = React.useState<{ locations:string; createdFrom?: string; createdTo?: string; lastLoginFrom?: string; lastLoginTo?: string; failedLoginsGte?: number }>({ locations:'', createdFrom: undefined, createdTo: undefined, lastLoginFrom: undefined, lastLoginTo: undefined, failedLoginsGte: undefined });
 
   const fetchList = React.useCallback(async () => {
     setLoading(true);
     try {
       const qs = new URLSearchParams();
-      if (roleFilter && roleFilter.length) qs.set('role', roleFilter[0]); // server supports single role filter for now
+      if (roleFilter && roleFilter.length) qs.set('role', roleFilter.join(','));
       if (statusFilter) qs.set('status', statusFilter);
       if (range) qs.set('since', range);
-      const data = await apiGET<User[]>(`/api/users${qs.toString()?`?${qs.toString()}`:''}`, true);
-      setRows(data || []);
+      if (advanced.locations) qs.set('locations', advanced.locations);
+      if (advanced.createdFrom) qs.set('created_from', advanced.createdFrom);
+      if (advanced.createdTo) qs.set('created_to', advanced.createdTo);
+      if (advanced.lastLoginFrom) qs.set('last_login_from', advanced.lastLoginFrom);
+      if (advanced.lastLoginTo) qs.set('last_login_to', advanced.lastLoginTo);
+      if (advanced.failedLoginsGte != null) qs.set('failed_logins_gte', String(advanced.failedLoginsGte));
+      qs.set('page', String(page));
+      qs.set('page_size', String(pageSize));
+      const data = await apiGET<any>(`/api/users${qs.toString()?`?${qs.toString()}`:''}`, true);
+      if (Array.isArray(data)) { setRows(data); setTotal(undefined); }
+      else { setRows(data?.items || []); setTotal(data?.total); }
     } finally { setLoading(false); }
-  }, [roleFilter, statusFilter, range]);
+  }, [roleFilter, statusFilter, range, page, pageSize, advanced]);
 
   // Load saved view (URL -> localStorage fallback)
   React.useEffect(() => {
@@ -103,6 +119,7 @@ export default function UsersPage() {
       title: 'Korisnik',
       dataIndex: 'name',
       key: 'name',
+      hidden: colVis.name === false,
       render: (_, r) => (
         <Space>
           <div style={{ width: 28, height: 28, borderRadius: 999, background: '#334155', color:'#fff', display:'grid', placeItems:'center', fontWeight:700 }}>
@@ -115,24 +132,24 @@ export default function UsersPage() {
         </Space>
       )
     },
-    { title: 'Uloga', dataIndex: 'role', key: 'role', width: 140,
+    { title: 'Uloga', dataIndex: 'role', key: 'role', width: 140, hidden: colVis.role === false,
       render: (v: Role) => <Tag color={roleColors[v] || 'default'}>{v}</Tag>
     },
-    { title: 'Status', dataIndex: 'status', key: 'status', width: 120,
+    { title: 'Status', dataIndex: 'status', key: 'status', width: 120, hidden: colVis.status === false,
       render: (s: Status) => <Tag color={s==='active'?'green':s==='invited'?'blue':s==='suspended'?'volcano':'red'}>{s}</Tag>
     },
-    { title: 'Zadaci danas', dataIndex: 'tasks_today', key: 'tasks_today', width: 120, align: 'right' },
-    { title: 'KPI 7d', dataIndex: 'kpi_7d', key: 'kpi_7d', width: 180,
+    { title: 'Zadaci danas', dataIndex: 'tasks_today', key: 'tasks_today', width: 120, align: 'right', hidden: colVis.tasks_today === false },
+    { title: 'KPI 7d', dataIndex: 'kpi_7d', key: 'kpi_7d', width: 180, hidden: colVis.kpi === false,
       render: (k: any) => (
         <div style={{ fontSize:12 }}>
           <div>Obrađeno: <b>{k?.processed ?? 0}</b></div>
         </div>
       )
     },
-    { title: 'Posljednja aktivnost', dataIndex: 'last_activity_at', key: 'last_activity_at', width: 180,
+    { title: 'Posljednja aktivnost', dataIndex: 'last_activity_at', key: 'last_activity_at', width: 180, hidden: colVis.last_activity_at === false,
       render: (v?: string) => v ? new Date(v).toLocaleString() : ''
     },
-    { title: 'Kreiran', dataIndex: 'created_at', key: 'created_at', width: 180,
+    { title: 'Kreiran', dataIndex: 'created_at', key: 'created_at', width: 180, hidden: colVis.created_at === false,
       render: (v: string) => new Date(v).toLocaleDateString()
     },
     { title: '', key: 'actions', fixed: 'right', width: 60,
@@ -179,6 +196,8 @@ export default function UsersPage() {
   const onTimePct = 0; // placeholder
   const tasksToday = React.useMemo(() => rows.reduce((a,b)=> a + (b.tasks_today || 0), 0), [rows]);
 
+  const activeFilterCount = (roleFilter?.length||0) + (statusFilter?1:0) + (advanced.locations?1:0) + (advanced.createdFrom?1:0) + (advanced.createdTo?1:0) + (advanced.lastLoginFrom?1:0) + (advanced.lastLoginTo?1:0) + (advanced.failedLoginsGte?1:0);
+
   return (
     <div className="grid gap-12">
       <div className="grid grid-cols-4 gap-3">
@@ -208,8 +227,10 @@ export default function UsersPage() {
           <Select allowClear style={{ width: 160 }} placeholder="Status" value={statusFilter as any} onChange={setStatusFilter as any}
                   options={["active","invited","suspended","locked"].map(s=>({ value:s, label:s }))} />
           <Select style={{ width: 140 }} value={range} onChange={setRange as any} options={[{value:'24h',label:'24h'},{value:'7d',label:'7 dana'},{value:'30d',label:'30 dana'}]} />
+          <Button onClick={()=> setFiltersOpen(true)}>Filteri {activeFilterCount? <Badge count={activeFilterCount} />: null}</Button>
         </Space>
         <Space>
+          <Button type="primary" onClick={()=> setCreateOpen(true)}>+ Novi korisnik</Button>
           <Dropdown
             menu={{
               items: [
@@ -254,6 +275,19 @@ export default function UsersPage() {
             value={density}
             onChange={(v)=> setDensity(v as any)}
           />
+          <Dropdown
+            menu={{ items: [
+              { key:'name', label: <label><input type="checkbox" checked={colVis.name!==false} onChange={(e)=> { const nv = {...colVis, name: e.target.checked}; setColVis(nv); localStorage.setItem('users_cols', JSON.stringify(nv)); }} /> Ime/Email</label> },
+              { key:'role', label: <label><input type="checkbox" checked={colVis.role!==false} onChange={(e)=> { const nv = {...colVis, role: e.target.checked}; setColVis(nv); localStorage.setItem('users_cols', JSON.stringify(nv)); }} /> Uloga</label> },
+              { key:'status', label: <label><input type="checkbox" checked={colVis.status!==false} onChange={(e)=> { const nv = {...colVis, status: e.target.checked}; setColVis(nv); localStorage.setItem('users_cols', JSON.stringify(nv)); }} /> Status</label> },
+              { key:'tasks', label: <label><input type="checkbox" checked={colVis.tasks_today!==false} onChange={(e)=> { const nv = {...colVis, tasks_today: e.target.checked}; setColVis(nv); localStorage.setItem('users_cols', JSON.stringify(nv)); }} /> Zadaci</label> },
+              { key:'kpi', label: <label><input type="checkbox" checked={colVis.kpi!==false} onChange={(e)=> { const nv = {...colVis, kpi: e.target.checked}; setColVis(nv); localStorage.setItem('users_cols', JSON.stringify(nv)); }} /> KPI</label> },
+              { key:'last', label: <label><input type="checkbox" checked={colVis.last_activity_at!==false} onChange={(e)=> { const nv = {...colVis, last_activity_at: e.target.checked}; setColVis(nv); localStorage.setItem('users_cols', JSON.stringify(nv)); }} /> Posl. aktivnost</label> },
+              { key:'created', label: <label><input type="checkbox" checked={colVis.created_at!==false} onChange={(e)=> { const nv = {...colVis, created_at: e.target.checked}; setColVis(nv); localStorage.setItem('users_cols', JSON.stringify(nv)); }} /> Kreiran</label> },
+            ]}}
+          >
+            <Button>Kolone</Button>
+          </Dropdown>
         </Space>
       </div>
 
@@ -265,11 +299,40 @@ export default function UsersPage() {
           loading={loading}
           dataSource={filtered}
           columns={columns}
-          pagination={{ pageSize: 20, showSizeChanger: true }}
+          pagination={{ current: page, pageSize, total: total ?? filtered.length, showSizeChanger: true, onChange: (p, ps)=> { setPage(p); setPageSize(ps); } }}
           rowSelection={{ selectedRowKeys: selectedKeys, onChange: (keys)=> setSelectedKeys(keys as number[]) }}
           onRow={(r)=> ({ onClick: ()=> setDrawer({ open: true, user: r }) })}
         />
       </div>
+
+      {/* Filters drawer */}
+      <Drawer title="Filteri" placement="right" width={360} onClose={()=> setFiltersOpen(false)} open={filtersOpen} destroyOnClose>
+        <div className="grid gap-3">
+          <label className="grid gap-1"><span className="text-xs opacity-70">Lokacije (CSV)</span><Input value={advanced.locations} onChange={(e)=> setAdvanced(a=> ({...a, locations: e.target.value}))} /></label>
+          <div className="grid gap-1"><span className="text-xs opacity-70">Kreiran</span>
+            <Space>
+              <DatePicker placeholder="Od" onChange={(d)=> setAdvanced(a=> ({...a, createdFrom: d? d.toISOString(): undefined}))} />
+              <DatePicker placeholder="Do" onChange={(d)=> setAdvanced(a=> ({...a, createdTo: d? d.toISOString(): undefined}))} />
+            </Space>
+          </div>
+          <div className="grid gap-1"><span className="text-xs opacity-70">Zadnja prijava</span>
+            <Space>
+              <DatePicker placeholder="Od" onChange={(d)=> setAdvanced(a=> ({...a, lastLoginFrom: d? d.toISOString(): undefined}))} />
+              <DatePicker placeholder="Do" onChange={(d)=> setAdvanced(a=> ({...a, lastLoginTo: d? d.toISOString(): undefined}))} />
+            </Space>
+          </div>
+          <label className="grid gap-1"><span className="text-xs opacity-70">Neuspjele prijave ≥</span><Input type="number" value={advanced.failedLoginsGte as any} onChange={(e)=> setAdvanced(a=> ({...a, failedLoginsGte: Number(e.target.value)}))} /></label>
+          <div className="flex gap-2">
+            <Button onClick={()=> { setAdvanced({ locations:'', createdFrom: undefined, createdTo: undefined, lastLoginFrom: undefined, lastLoginTo: undefined, failedLoginsGte: undefined }); }}>Reset</Button>
+            <Button type="primary" onClick={()=> { setFiltersOpen(false); setPage(1); fetchList(); }}>Primijeni</Button>
+          </div>
+        </div>
+      </Drawer>
+
+      {/* Create drawer */}
+      <Drawer title="Novi korisnik" placement="right" width={420} onClose={()=> setCreateOpen(false)} open={createOpen} destroyOnClose>
+        <CreateUser onCreated={()=> { setCreateOpen(false); fetchList(); }} />
+      </Drawer>
 
       <Drawer title={drawer.user? drawer.user.name : 'Korisnik'} placement="right" width={520} onClose={()=> setDrawer({ open:false })} open={drawer.open} destroyOnClose>
         {drawer.user && (
@@ -500,6 +563,36 @@ function NotesFiles({ user }: { user: User }) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+function CreateUser({ onCreated }: { onCreated: ()=>void }) {
+  const [form, setForm] = React.useState<{ name:string; email:string; role:Role; phone?:string; locations?:string; temporary?:boolean }>({ name:'', email:'', role:'viewer', phone:'', locations:'', temporary:true });
+  const [creating, setCreating] = React.useState(false);
+  async function submit() {
+    setCreating(true);
+    try {
+      const body: any = { name: form.name, email: form.email, role: form.role, phone: form.phone, require_password_change: form.temporary };
+      if (form.locations) body.locations = form.locations.split(',').map(s=>s.trim()).filter(Boolean);
+      const res = await apiPOST<any>(`/api/users`, body, { auth: true });
+      if (res?.temporary_password) {
+        alert(`Privremena lozinka: ${res.temporary_password}`);
+      }
+      onCreated();
+    } catch (e:any) {
+      alert(e?.message || 'Greška');
+    } finally { setCreating(false); }
+  }
+  return (
+    <div className="grid gap-3">
+      <label className="grid gap-1"><span className="text-xs opacity-70">Ime i prezime</span><Input value={form.name} onChange={(e)=> setForm({...form, name: e.target.value})} /></label>
+      <label className="grid gap-1"><span className="text-xs opacity-70">Email</span><Input type="email" value={form.email} onChange={(e)=> setForm({...form, email: e.target.value})} /></label>
+      <label className="grid gap-1"><span className="text-xs opacity-70">Telefon</span><Input value={form.phone} onChange={(e)=> setForm({...form, phone: e.target.value})} /></label>
+      <label className="grid gap-1"><span className="text-xs opacity-70">Uloga</span><Select value={form.role} onChange={(v)=> setForm({...form, role: v})} options={["admin","manager","magacioner","komercijalista","viewer","external"].map(r=>({ value:r, label:r })) as any} /></label>
+      <label className="grid gap-1"><span className="text-xs opacity-70">Lokacije (CSV)</span><Input value={form.locations} onChange={(e)=> setForm({...form, locations: e.target.value})} /></label>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.temporary} onChange={(e)=> setForm({...form, temporary: e.target.checked})} /> Privremena lozinka + zahtjev promjene</label>
+      <div className="pt-2"><Button type="primary" loading={creating} onClick={submit}>Kreiraj</Button></div>
     </div>
   );
 }
