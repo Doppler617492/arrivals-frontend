@@ -1,8 +1,8 @@
 import React from 'react';
 import { apiGET, apiPOST, apiPATCH, apiUPLOAD, apiDELETE } from '../api/client';
-import { Table, Tag, Drawer, Tabs, Button, Input, Select, Space, Dropdown, Segmented, DatePicker, Badge } from 'antd';
+import { Table, Tag, Drawer, Tabs, Button, Input, Select, Space, Dropdown, Segmented, DatePicker, Badge, Card } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DownOutlined, EyeOutlined, EditOutlined, RedoOutlined, StopOutlined, DeleteOutlined, LockOutlined, UnlockOutlined, MoreOutlined } from '@ant-design/icons';
+import { DownOutlined, EyeOutlined, EditOutlined, RedoOutlined, StopOutlined, DeleteOutlined, LockOutlined, UnlockOutlined, MoreOutlined, SearchOutlined } from '@ant-design/icons';
 
 type Role = 'admin' | 'manager' | 'magacioner' | 'komercijalista' | 'viewer' | 'external';
 type Status = 'active' | 'invited' | 'suspended' | 'locked';
@@ -223,7 +223,17 @@ export default function UsersPage() {
   const activeFilterCount = (roleFilter?.length||0) + (statusFilter?1:0) + (advanced.locations?1:0) + (advanced.createdFrom?1:0) + (advanced.createdTo?1:0) + (advanced.lastLoginFrom?1:0) + (advanced.lastLoginTo?1:0) + (advanced.failedLoginsGte?1:0);
 
   return (
-    <div className="grid gap-12">
+    <div style={{ background:'#f5f7fb' }}>
+      <div style={{ maxWidth: 1320, margin: '0 auto', padding: '24px 24px 40px' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: 16 }}>
+          <div style={{ fontSize: 26, fontWeight: 600 }}>User Management</div>
+          <Button type="primary" size="large" onClick={()=> setCreateOpen(true)}>Add New User</Button>
+        </div>
+        <div style={{ display:'flex', gap: 12, alignItems:'center', marginBottom: 16 }}>
+          <Input size="large" placeholder="Search users…" prefix={<SearchOutlined />} value={q} onChange={(e)=> setQ(e.target.value)} />
+          <Button onClick={()=> setFiltersOpen(true)}>Filters {activeFilterCount? <Badge count={activeFilterCount} />: null}</Button>
+        </div>
+        <div className="grid gap-12">
       <div className="grid grid-cols-4 gap-3">
         <div className="rounded-lg bg-white/5 p-4">
           <div className="text-xs opacity-70">Aktivni korisnici (7d)</div>
@@ -373,6 +383,7 @@ export default function UsersPage() {
           />
         )}
       </Drawer>
+      </div>
     </div>
   );
 }
