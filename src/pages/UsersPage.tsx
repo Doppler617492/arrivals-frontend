@@ -2,7 +2,7 @@ import React from 'react';
 import { apiGET, apiPOST, apiPATCH, apiUPLOAD, apiDELETE } from '../api/client';
 import { Table, Tag, Drawer, Tabs, Button, Input, Select, Space, Dropdown, Segmented, DatePicker, Badge } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DownOutlined } from '@ant-design/icons';
+import { DownOutlined, EyeOutlined, EditOutlined, RedoOutlined, StopOutlined, DeleteOutlined, LockOutlined, UnlockOutlined, MoreOutlined } from '@ant-design/icons';
 
 type Role = 'admin' | 'manager' | 'magacioner' | 'komercijalista' | 'viewer' | 'external';
 type Status = 'active' | 'invited' | 'suspended' | 'locked';
