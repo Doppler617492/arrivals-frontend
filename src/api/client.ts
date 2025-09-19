@@ -83,7 +83,8 @@ export async function apiPOST<T>(
 ): Promise<T> {
   const t = withTimeout(30_000);
   try {
-    const res = await fetch(makeUrl(path), {
+    const url = makeUrl(path);
+    let res = await fetch(url, {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -94,6 +95,37 @@ export async function apiPOST<T>(
       body: JSON.stringify(body),
       signal: t?.signal,
     });
+    // Fallback #1: some servers require trailing slash for POST (405/308)
+    if (!res.ok && (res.status === 405 || res.status === 308)) {
+      const hasSlash = /\/$/.test(url);
+      const toggled = hasSlash ? url.replace(/\/$/, "") : `${url}/`;
+      res = await fetch(toggled, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...(opts?.auth ? { Authorization: `Bearer ${getToken()}` } : {}),
+          ...(opts?.useApiKey && API_KEY ? { "X-API-Key": API_KEY } : {}),
+        },
+        body: JSON.stringify(body),
+        signal: t?.signal,
+      });
+    }
+    // Fallback #2: explicit create endpoint for arrivals if still 405
+    if (!res.ok && res.status === 405 && /\/api\/arrivals\/?$/.test(url)) {
+      const alt = url.replace(/\/api\/arrivals\/?$/, "/api/arrivals/create");
+      res = await fetch(alt, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...(opts?.auth ? { Authorization: `Bearer ${getToken()}` } : {}),
+          ...(opts?.useApiKey && API_KEY ? { "X-API-Key": API_KEY } : {}),
+        },
+        body: JSON.stringify(body),
+        signal: t?.signal,
+      });
+    }
     return await handleJson<T>(res);
   } finally { t?.done?.(); }
 }

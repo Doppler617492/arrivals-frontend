@@ -1,190 +1,505 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { apiGET, apiPOST, apiPATCH, apiDELETE } from '../api/client';
+import React from 'react';
+import { apiGET, apiPOST, apiPATCH, apiUPLOAD } from '../api/client';
+import { Table, Tag, Drawer, Tabs, Button, Input, Select, Space, Dropdown, Segmented } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import { DownOutlined } from '@ant-design/icons';
 
-// Roles aligned with backend + UI
-export type Role = 'admin' | 'planer' | 'proizvodnja' | 'transport' | 'carina' | 'viewer';
-export type User = { id: number; name: string; email: string; role: Role };
+type Role = 'admin' | 'manager' | 'magacioner' | 'komercijalista' | 'viewer' | 'external';
+type Status = 'active' | 'invited' | 'suspended' | 'locked';
+
+type User = {
+  id: number;
+  email: string;
+  username?: string;
+  name: string;
+  phone?: string;
+  role: Role;
+  status: Status;
+  type?: 'internal' | 'external';
+  created_at: string;
+  last_activity_at?: string;
+  kpi_7d?: { processed?: number; avg_duration_minutes?: number | null; on_time_pct?: number | null };
+  tasks_today?: number;
+};
+
+const roleColors: Record<Role, string> = {
+  admin: 'magenta', manager: 'geekblue', magacioner: 'green', komercijalista: 'gold', viewer: 'default', external: 'purple'
+};
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [rows, setRows] = React.useState<User[]>([]);
+  const [selectedKeys, setSelectedKeys] = React.useState<number[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [drawer, setDrawer] = React.useState<{ open: boolean; user?: User }>({ open: false });
+  const [q, setQ] = React.useState('');
+  const [roleFilter, setRoleFilter] = React.useState<Role[] | undefined>(undefined);
+  const [statusFilter, setStatusFilter] = React.useState<Status | undefined>(undefined);
+  const [range, setRange] = React.useState<'24h' | '7d' | '30d'>('7d');
+  const [density, setDensity] = React.useState<'middle' | 'small'>('middle');
 
-  // form state
-  const emptyForm = useMemo(() => ({ name: '', email: '', role: 'planer' as Role, password: '' }), []);
-  const [form, setForm] = useState<{ name: string; email: string; role: Role; password?: string }>(emptyForm);
-  const [editingId, setEditingId] = useState<number | null>(null);
-
-  async function loadUsers() {
+  const fetchList = React.useCallback(async () => {
     setLoading(true);
-    setError(null);
     try {
-      // NOTE: backend exposes /users (no /api prefix)
-      const data = await apiGET<User[]>('/users', true);
-      setUsers(Array.isArray(data) ? data : []);
-    } catch (e: any) {
-      setError(e.message || 'Greška pri učitavanju korisnika');
-    } finally {
-      setLoading(false);
+      const qs = new URLSearchParams();
+      if (roleFilter && roleFilter.length) qs.set('role', roleFilter[0]); // server supports single role filter for now
+      if (statusFilter) qs.set('status', statusFilter);
+      if (range) qs.set('since', range);
+      const data = await apiGET<User[]>(`/api/users${qs.toString()?`?${qs.toString()}`:''}`, true);
+      setRows(data || []);
+    } finally { setLoading(false); }
+  }, [roleFilter, statusFilter, range]);
+
+  // Load saved view (URL -> localStorage fallback)
+  React.useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const q0 = sp.get('q') || '';
+    const r0 = (sp.get('role') || '').split(',').filter(Boolean) as Role[];
+    const s0 = (sp.get('status') || undefined) as Status | undefined;
+    const rng0 = (sp.get('since') as any) || '7d';
+    const den0 = (sp.get('density') as any) || undefined;
+    if (q0) setQ(q0);
+    if (r0.length) setRoleFilter(r0);
+    if (s0) setStatusFilter(s0);
+    if (rng0) setRange(rng0);
+    if (den0 === 'small' || den0 === 'middle') setDensity(den0);
+    if (!sp.toString()) {
+      try {
+        const saved = JSON.parse(localStorage.getItem('users_view') || 'null');
+        if (saved) {
+          setQ(saved.q ?? '');
+          setRoleFilter(saved.roleFilter ?? undefined);
+          setStatusFilter(saved.statusFilter ?? undefined);
+          setRange(saved.range ?? '7d');
+          setDensity(saved.density ?? 'middle');
+        }
+      } catch {}
     }
-  }
+  }, []);
 
-  useEffect(() => { loadUsers(); }, []);
+  // Persist view state (URL + localStorage)
+  React.useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    if (q) sp.set('q', q); else sp.delete('q');
+    if (roleFilter && roleFilter.length) sp.set('role', roleFilter.join(',')); else sp.delete('role');
+    if (statusFilter) sp.set('status', statusFilter); else sp.delete('status');
+    if (range) sp.set('since', range); else sp.delete('since');
+    if (density) sp.set('density', density);
+    const str = sp.toString();
+    const next = `${window.location.pathname}${str?`?${str}`:''}`;
+    window.history.replaceState(null, '', next);
+    try { localStorage.setItem('users_view', JSON.stringify({ q, roleFilter, statusFilter, range, density })); } catch {}
+  }, [q, roleFilter, statusFilter, range, density]);
 
-  function resetForm() {
-    setForm(emptyForm);
-    setEditingId(null);
-  }
+  React.useEffect(() => { fetchList(); }, [fetchList]);
 
-  function onEdit(u: User) {
-    setEditingId(u.id);
-    setForm({ name: u.name, email: u.email, role: u.role, password: '' });
-  }
+  const filtered = React.useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter(r => [r.name, r.email, r.username, r.role, r.status].filter(Boolean).join(' ').toLowerCase().includes(term));
+  }, [rows, q]);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    try {
-      setError(null);
-      if (editingId) {
-        const body: any = { name: form.name, email: form.email, role: form.role };
-        if (form.password) body.password = form.password;
-        await apiPATCH<User>(`/users/${editingId}`, body, true);
-      } else {
-        await apiPOST<User>('/users', form, { auth: true });
+  const columns: ColumnsType<User> = [
+    {
+      title: 'Korisnik',
+      dataIndex: 'name',
+      key: 'name',
+      render: (_, r) => (
+        <Space>
+          <div style={{ width: 28, height: 28, borderRadius: 999, background: '#334155', color:'#fff', display:'grid', placeItems:'center', fontWeight:700 }}>
+            {(r.name || r.email).slice(0,1).toUpperCase()}
+          </div>
+          <div>
+            <div style={{ fontWeight: 600 }}>{r.name || '(bez imena)'}</div>
+            <div style={{ fontSize: 12, opacity:.7 }}>{r.email}{r.username?` • ${r.username}`:''}</div>
+          </div>
+        </Space>
+      )
+    },
+    { title: 'Uloga', dataIndex: 'role', key: 'role', width: 140,
+      render: (v: Role) => <Tag color={roleColors[v] || 'default'}>{v}</Tag>
+    },
+    { title: 'Status', dataIndex: 'status', key: 'status', width: 120,
+      render: (s: Status) => <Tag color={s==='active'?'green':s==='invited'?'blue':s==='suspended'?'volcano':'red'}>{s}</Tag>
+    },
+    { title: 'Zadaci danas', dataIndex: 'tasks_today', key: 'tasks_today', width: 120, align: 'right' },
+    { title: 'KPI 7d', dataIndex: 'kpi_7d', key: 'kpi_7d', width: 180,
+      render: (k: any) => (
+        <div style={{ fontSize:12 }}>
+          <div>Obrađeno: <b>{k?.processed ?? 0}</b></div>
+        </div>
+      )
+    },
+    { title: 'Posljednja aktivnost', dataIndex: 'last_activity_at', key: 'last_activity_at', width: 180,
+      render: (v?: string) => v ? new Date(v).toLocaleString() : ''
+    },
+    { title: 'Kreiran', dataIndex: 'created_at', key: 'created_at', width: 180,
+      render: (v: string) => new Date(v).toLocaleDateString()
+    },
+    { title: '', key: 'actions', fixed: 'right', width: 60,
+      render: (_, r) => {
+        const items = [
+          { key: 'edit', label: 'Uredi' },
+          { key: 'reset', label: 'Reset lozinke' },
+          { key: 'suspend', label: r.status==='active'?'Suspenduj':'Reaktiviraj' },
+          { key: 'revoke', label: 'Revoke sessions' },
+        ];
+        return (
+          <Dropdown
+            menu={{ items, onClick: async ({ key }) => {
+              if (key==='edit') setDrawer({ open:true, user:r });
+              if (key==='reset') {
+                const resp = await apiPOST<any>(`/api/users/${r.id}/password/reset`, { generate_temp: true }, { auth: true });
+                alert(`Privremena lozinka: ${resp?.temp_password || '(nije generisana)'}`);
+              }
+              if (key==='suspend') {
+                const status: Status = r.status==='active' ? 'suspended' : 'active';
+                await apiPOST(`/api/users/bulk/status`, { ids: [r.id], status }, { auth: true });
+                fetchList();
+              }
+              if (key==='revoke') {
+                await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${r.id}/sessions`, { method:'DELETE', headers:{ Authorization:`Bearer ${localStorage.getItem('token')}` } });
+              }
+            } }}
+            trigger={["click"]}
+          >
+            <Button type="text" size="small">⋯</Button>
+          </Dropdown>
+        );
       }
-      await loadUsers();
-      resetForm();
-      alert('Sačuvano.');
-    } catch (e: any) {
-      alert(`Greška: ${e.message || 'nepoznato'}`);
     }
-  }
+  ];
 
-  async function onDelete(id: number) {
-    if (!confirm('Obrisati korisnika?')) return;
-    try {
-      await apiDELETE<{ ok: boolean }>(`/users/${id}`, true);
-      setUsers(prev => prev.filter(u => u.id !== id));
-    } catch (e: any) {
-      alert(`Brisanje nije uspjelo: ${e.message || 'nepoznato'}`);
-    }
-  }
+  const selected = rows.filter(r => selectedKeys.includes(r.id));
+  const kpiActive7d = React.useMemo(() => rows.filter(r => r.last_activity_at && (range!=='24h')).length, [rows, range]);
+  const avgProcessed7d = React.useMemo(() => {
+    const xs = rows.map(r => r.kpi_7d?.processed || 0);
+    if (!xs.length) return 0;
+    return Math.round(xs.reduce((a,b)=>a+b,0) / xs.length);
+  }, [rows]);
+  const onTimePct = 0; // placeholder
+  const tasksToday = React.useMemo(() => rows.reduce((a,b)=> a + (b.tasks_today || 0), 0), [rows]);
 
   return (
-    <div className="grid gap-6">
-      <div>
-        <h1 className="text-xl font-semibold">Korisnici</h1>
-        <p className="opacity-80">Administracija korisnika i uloga.</p>
-      </div>
-
-      {/* LISTA */}
-      <div className="rounded-lg border border-white/10 overflow-hidden">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-white/5">
-            <tr>
-              <th className="py-2 px-3">Ime</th>
-              <th className="py-2 px-3">Email</th>
-              <th className="py-2 px-3">Uloga</th>
-              <th className="py-2 px-3 text-right">Akcije</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr>
-                <td className="py-3 px-3" colSpan={4}>Učitavanje...</td>
-              </tr>
-            )}
-            {error && !loading && (
-              <tr>
-                <td className="py-3 px-3 text-red-400" colSpan={4}>{error}</td>
-              </tr>
-            )}
-            {!loading && !error && users.length === 0 && (
-              <tr>
-                <td className="py-3 px-3" colSpan={4}>Nema korisnika.</td>
-              </tr>
-            )}
-            {users.map(u => (
-              <tr key={u.id} className="border-t border-white/10">
-                <td className="py-2 px-3">{u.name}</td>
-                <td className="py-2 px-3">{u.email}</td>
-                <td className="py-2 px-3">{u.role}</td>
-                <td className="py-2 px-3 text-right space-x-2">
-                  <button className="rounded bg-white/10 px-2 py-1 hover:bg-white/20" onClick={() => onEdit(u)}>Uredi</button>
-                  <button className="rounded bg-red-600/80 px-2 py-1 hover:bg-red-600" onClick={() => onDelete(u.id)}>Obriši</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* FORMA */}
-      <form onSubmit={onSubmit} className="grid gap-3 rounded-lg border border-white/10 p-4">
-        <div className="flex items-center justify-between">
-          <h2 className="font-medium">{editingId ? 'Uredi korisnika' : 'Novi korisnik'}</h2>
-          {editingId && (
-            <button type="button" className="rounded bg-white/10 px-2 py-1 hover:bg-white/20" onClick={resetForm}>
-              Nova kreacija
-            </button>
-          )}
+    <div className="grid gap-12">
+      <div className="grid grid-cols-4 gap-3">
+        <div className="rounded-lg bg-white/5 p-4">
+          <div className="text-xs opacity-70">Aktivni korisnici (7d)</div>
+          <div className="text-2xl font-semibold">{kpiActive7d}</div>
         </div>
+        <div className="rounded-lg bg-white/5 p-4">
+          <div className="text-xs opacity-70">Pros. # obrađenih (7d)</div>
+          <div className="text-2xl font-semibold">{avgProcessed7d}</div>
+        </div>
+        <div className="rounded-lg bg-white/5 p-4">
+          <div className="text-xs opacity-70">% on-time (7d)</div>
+          <div className="text-2xl font-semibold">{onTimePct}%</div>
+        </div>
+        <div className="rounded-lg bg-white/5 p-4">
+          <div className="text-xs opacity-70">Otvoreni zadaci danas</div>
+          <div className="text-2xl font-semibold">{tasksToday}</div>
+        </div>
+      </div>
 
-        <label className="grid gap-1">
-          <span className="text-sm opacity-80">Ime</span>
-          <input
-            className="rounded bg-white/10 px-3 py-2 outline-none focus:ring-2 focus:ring-white/30"
-            value={form.name}
-            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            required
-          />
-        </label>
-
-        <label className="grid gap-1">
-          <span className="text-sm opacity-80">Email</span>
-          <input
-            type="email"
-            className="rounded bg-white/10 px-3 py-2 outline-none focus:ring-2 focus:ring-white/30"
-            value={form.email}
-            onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-            required
-          />
-        </label>
-
-        <label className="grid gap-1">
-          <span className="text-sm opacity-80">Uloga</span>
-          <select
-            className="rounded bg-white/10 px-3 py-2 outline-none focus:ring-2 focus:ring-white/30"
-            value={form.role}
-            onChange={e => setForm(f => ({ ...f, role: e.target.value as Role }))}
+      <div className="flex items-end justify-between gap-3">
+        <Space wrap>
+          <Input placeholder="Pretraga (/ fokus)" value={q} onChange={(e)=> setQ(e.target.value)} />
+          <Select allowClear mode="multiple" style={{ minWidth: 220 }} placeholder="Uloga" value={roleFilter} onChange={setRoleFilter as any}
+                  options={["admin","manager","magacioner","komercijalista","viewer","external"].map(r=>({ value:r, label:r }))} />
+          <Select allowClear style={{ width: 160 }} placeholder="Status" value={statusFilter as any} onChange={setStatusFilter as any}
+                  options={["active","invited","suspended","locked"].map(s=>({ value:s, label:s }))} />
+          <Select style={{ width: 140 }} value={range} onChange={setRange as any} options={[{value:'24h',label:'24h'},{value:'7d',label:'7 dana'},{value:'30d',label:'30 dana'}]} />
+        </Space>
+        <Space>
+          <Dropdown
+            menu={{
+              items: [
+                { key: 'roles', label: 'Dodijeli uloge' },
+                { key: 'status', label: 'Suspend/Reactivate' },
+                { key: 'reset', label: 'Reset lozinke' },
+                { key: 'export', label: 'Export CSV' },
+              ],
+              onClick: async ({ key }) => {
+                if (!selectedKeys.length) { alert('Nema selekcije'); return; }
+                if (key==='export') {
+                  const qs = new URLSearchParams();
+                  if (roleFilter && roleFilter.length) qs.set('role', roleFilter[0]);
+                  if (statusFilter) qs.set('status', statusFilter);
+                  const url = `${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/export${qs.toString()?`?${qs}`:''}`;
+                  window.open(url, '_blank');
+                  return;
+                }
+                if (key==='status') {
+                  const status: Status = 'suspended';
+                  await apiPOST(`/api/users/bulk/status`, { ids: selectedKeys, status }, { auth: true });
+                  fetchList();
+                }
+                if (key==='reset') {
+                  const resp = await apiPOST<any>(`/api/users/bulk/reset_password`, { ids: selectedKeys }, { auth: true });
+                  alert(`Privremene lozinke:\n${Object.entries(resp?.temp_passwords||{}).map(([k,v])=>`${k}: ${v}`).join('\n')}`);
+                }
+                if (key==='roles') {
+                  const roles = prompt('Role keys (comma-separated), npr: manager,viewer');
+                  if (!roles) return;
+                  await apiPOST(`/api/users/bulk/roles`, { ids: selectedKeys, roles: roles.split(',').map(s=>s.trim()).filter(Boolean) }, { auth: true });
+                  fetchList();
+                }
+              }
+            }}
+            trigger={["click"]}
           >
-            <option value="admin">admin</option>
-            <option value="planer">planer</option>
-            <option value="proizvodnja">proizvodnja</option>
-            <option value="transport">transport</option>
-            <option value="carina">carina</option>
-            <option value="viewer">viewer</option>
-          </select>
-        </label>
-
-        <label className="grid gap-1">
-          <span className="text-sm opacity-80">Lozinka {editingId ? '(ostavite prazno ako ne mijenjate)' : ''}</span>
-          <input
-            type="password"
-            className="rounded bg-white/10 px-3 py-2 outline-none focus:ring-2 focus:ring-white/30"
-            value={form.password || ''}
-            onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-            placeholder={editingId ? 'Nova lozinka (opciono)' : 'Lozinka'}
-            {...(editingId ? {} : { required: true })}
+            <Button type="primary">Bulk akcije <DownOutlined /></Button>
+          </Dropdown>
+          <Segmented
+            options={[{label:'Comfortable', value:'middle'}, {label:'Compact', value:'small'}]}
+            value={density}
+            onChange={(v)=> setDensity(v as any)}
           />
-        </label>
+        </Space>
+      </div>
 
-        <div className="pt-2">
-          <button className="rounded bg-emerald-600 px-4 py-2 hover:bg-emerald-500" type="submit">
-            {editingId ? 'Sačuvaj izmjene' : 'Kreiraj korisnika'}
-          </button>
+      <div className="rounded-lg border border-white/10 bg-white/5">
+        <Table
+          rowKey="id"
+          size={density}
+          sticky
+          loading={loading}
+          dataSource={filtered}
+          columns={columns}
+          pagination={{ pageSize: 20, showSizeChanger: true }}
+          rowSelection={{ selectedRowKeys: selectedKeys, onChange: (keys)=> setSelectedKeys(keys as number[]) }}
+          onRow={(r)=> ({ onClick: ()=> setDrawer({ open: true, user: r }) })}
+        />
+      </div>
+
+      <Drawer title={drawer.user? drawer.user.name : 'Korisnik'} placement="right" width={520} onClose={()=> setDrawer({ open:false })} open={drawer.open} destroyOnClose>
+        {drawer.user && (
+          <Tabs
+            items={[
+              { key:'profile', label:'Profil', children: <ProfileTab user={drawer.user} onSaved={fetchList} /> },
+              { key:'rbac', label:'Prava', children: <RBAC user={drawer.user} /> },
+              { key:'activity', label:'Aktivnost', children: <Activity user={drawer.user} /> },
+              { key:'sessions', label:'Sesije/Uređaji', children: <Sessions user={drawer.user} /> },
+              { key:'notifications', label:'Notifikacije', children: <Notifications user={drawer.user} /> },
+              { key:'productivity', label:'Produktivnost', children: <Productivity user={drawer.user} /> },
+              { key:'notes', label:'Napomene/Prilozi', children: <NotesFiles user={drawer.user} /> },
+            ]}
+          />
+        )}
+      </Drawer>
+    </div>
+  );
+}
+
+function ProfileTab({ user, onSaved }: { user: User; onSaved: ()=>void }) {
+  const [form, setForm] = React.useState({ name: user.name || '', phone: user.phone || '', type: user.type || 'internal', status: user.status, role: user.role });
+  async function save() {
+    await apiPATCH(`/api/users/${user.id}`, form, true);
+    onSaved();
+  }
+  return (
+    <div className="grid gap-3">
+      <label className="grid gap-1"><span className="text-xs opacity-70">Ime i prezime</span><Input value={form.name} onChange={e=> setForm({ ...form, name: e.target.value })} /></label>
+      <label className="grid gap-1"><span className="text-xs opacity-70">Telefon</span><Input value={form.phone} onChange={e=> setForm({ ...form, phone: e.target.value })} /></label>
+      <label className="grid gap-1"><span className="text-xs opacity-70">Tip</span><Select value={form.type} onChange={(v)=> setForm({ ...form, type: v })} options={[{value:'internal',label:'Interni'},{value:'external',label:'Eksterni'}]} /></label>
+      <label className="grid gap-1"><span className="text-xs opacity-70">Status</span><Select value={form.status} onChange={(v)=> setForm({ ...form, status: v })} options={["active","invited","suspended","locked"].map(s=>({ value:s, label:s }))} /></label>
+      <label className="grid gap-1"><span className="text-xs opacity-70">Primarna uloga</span><Select value={form.role} onChange={(v)=> setForm({ ...form, role: v })} options={["admin","manager","magacioner","komercijalista","viewer","external"].map(r=>({ value:r, label:r }))} /></label>
+      <div><Button type="primary" onClick={save}>Sačuvaj</Button></div>
+    </div>
+  );
+}
+
+function RBAC({ user }: { user: User }) {
+  const [rolesCSV, setRolesCSV] = React.useState<string>(user.role);
+  const [scope, setScope] = React.useState<string>('');
+  async function save() {
+    const roles = rolesCSV.split(',').map(s=>s.trim()).filter(Boolean);
+    const scopeList = scope.split(',').map(s=>s.trim()).filter(Boolean);
+    await apiPOST(`/api/users/${user.id}/roles`, { roles, scope: scopeList }, { auth: true });
+    alert('Sačuvano');
+  }
+  return (
+    <div className="grid gap-3">
+      <label className="grid gap-1"><span className="text-xs opacity-70">Role keys (comma)</span><Input value={rolesCSV} onChange={e=> setRolesCSV(e.target.value)} /></label>
+      <label className="grid gap-1"><span className="text-xs opacity-70">Scope lokacije (npr. PG,NK)</span><Input value={scope} onChange={e=> setScope(e.target.value)} /></label>
+      <div><Button type="primary" onClick={save}>Primijeni</Button></div>
+      <div className="text-xs opacity-70">Effective permissions (preview): read-only — generisano iz uloga + scope-a (TBD)</div>
+    </div>
+  );
+}
+
+function Activity({ user }: { user: User }) {
+  const [rows, setRows] = React.useState<any[]>([]);
+  React.useEffect(() => { (async()=>{ try{ const list = await apiGET<any[]>(`/api/users/${user.id}/audit?since=30d`, true); setRows(list||[]);}catch{}})(); }, [user.id]);
+  return (
+    <div className="grid gap-2">
+      {rows.length===0? <div className="opacity-60 text-sm">Nema aktivnosti.</div> : rows.map((r)=> (
+        <div key={r.id} className="border-b border-white/10 py-1"><div className="text-sm">{r.event}</div><div className="text-xs opacity-70">{new Date(r.created_at).toLocaleString()}</div></div>
+      ))}
+    </div>
+  );
+}
+
+function Sessions({ user }: { user: User }) {
+  const [rows, setRows] = React.useState<any[]>([]);
+  const load = async ()=> { try{ const list = await apiGET<any[]>(`/api/users/${user.id}/sessions`, true); setRows(list||[]);}catch{} };
+  React.useEffect(()=>{ load(); }, [user.id]);
+  async function revoke(id: number) { try{ await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/sessions/${id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${localStorage.getItem('token')}` } }); await load(); }catch{} }
+  async function revokeAll() { try{ await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/sessions`, { method:'DELETE', headers:{ Authorization:`Bearer ${localStorage.getItem('token')}` } }); await load(); }catch{} }
+  return (
+    <div className="grid gap-2">
+      <div className="flex justify-between items-center"><div className="font-medium">Aktivne sesije</div><Button onClick={revokeAll}>Revoke all</Button></div>
+      {rows.length===0? <div className="opacity-60 text-sm">Nema aktivnih sesija.</div> : rows.map((s)=> (
+        <div key={s.id} className="border border-white/10 rounded p-2 flex items-center justify-between">
+          <div className="text-sm">
+            <div><b>{s.os || 'OS'}</b> • {s.ip} • {s.ua?.slice(0,60)}</div>
+            <div className="text-xs opacity-70">Last seen: {new Date(s.last_seen_at).toLocaleString()} • Kreirano: {new Date(s.created_at).toLocaleString()}</div>
+          </div>
+          <div><Button danger onClick={()=> revoke(s.id)}>Revoke</Button></div>
         </div>
-      </form>
+      ))}
+    </div>
+  );
+}
+
+function Notifications({ user }: { user: User }) {
+  const [prefs, setPrefs] = React.useState<Array<{channel:string; event_key:string; enabled:boolean; frequency:string}>>([
+    { channel:'email', event_key:'arrivals.assigned', enabled:true, frequency:'instant' },
+    { channel:'email', event_key:'arrivals.due_today', enabled:true, frequency:'daily' },
+    { channel:'email', event_key:'container.late', enabled:true, frequency:'instant' },
+  ]);
+  async function save() {
+    await apiPOST(`/api/users/${user.id}/notifications`, { prefs }, { auth: true });
+    alert('Sačuvano');
+  }
+  return (
+    <div className="grid gap-2">
+      {prefs.map((p,idx)=> (
+        <div key={idx} className="flex gap-2 items-center">
+          <Select style={{ width: 120 }} value={p.channel} onChange={(v)=> setPrefs(prev=> prev.map((x,i)=> i===idx?{...x, channel:v}:x))} options={[{value:'email',label:'Email'},{value:'slack',label:'Slack'},{value:'teams',label:'Teams'}]} />
+          <Input style={{ flex:1 }} value={p.event_key} onChange={(e)=> setPrefs(prev=> prev.map((x,i)=> i===idx?{...x, event_key:e.target.value}:x))} />
+          <Select style={{ width: 140 }} value={p.frequency} onChange={(v)=> setPrefs(prev=> prev.map((x,i)=> i===idx?{...x, frequency:v}:x))} options={[{value:'instant',label:'Instant'},{value:'daily',label:'Dnevni digest'},{value:'weekly',label:'Sedmični pregled'}]} />
+          <Select style={{ width: 120 }} value={p.enabled? 'on':'off'} onChange={(v)=> setPrefs(prev=> prev.map((x,i)=> i===idx?{...x, enabled: v==='on'}:x))} options={[{value:'on',label:'On'},{value:'off',label:'Off'}]} />
+        </div>
+      ))}
+      <div><Button type="primary" onClick={save}>Sačuvaj</Button></div>
+    </div>
+  );
+}
+
+function Productivity({ user }: { user: User }) {
+  const [range, setRange] = React.useState<'7d'|'30d'>('7d');
+  const [data, setData] = React.useState<any | null>(null);
+  const load = async ()=> { try { const d = await apiGET<any>(`/api/users/${user.id}/productivity?range=${range}`, true); setData(d); } catch {} };
+  React.useEffect(()=> { load(); }, [user.id, range]);
+  const series = data?.series_day || [];
+  const max = Math.max(1, ...series.map((s:any)=> s.count));
+  return (
+    <div className="grid gap-4">
+      <div className="flex items-center justify-between">
+        <div className="text-sm opacity-70">Raspon</div>
+        <Select size="small" value={range} onChange={(v)=> setRange(v)} options={[{value:'7d',label:'7 dana'},{value:'30d',label:'30 dana'}]} />
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded bg-white/5 p-3"><div className="text-xs opacity-70">Obrađeno</div><div className="text-2xl font-semibold">{data?.processed ?? 0}</div></div>
+        <div className="rounded bg-white/5 p-3"><div className="text-xs opacity-70">Pros. trajanje</div><div className="text-2xl font-semibold">{data?.avg_duration_minutes ? `${Math.round(data.avg_duration_minutes)} min` : '—'}</div></div>
+        <div className="rounded bg-white/5 p-3"><div className="text-xs opacity-70">% on-time</div><div className="text-2xl font-semibold">{data?.on_time_pct ?? '—'}%</div></div>
+      </div>
+      {/* mini bar */}
+      <div>
+        <div className="text-xs opacity-70 mb-2">Trend (dnevno)</div>
+        <div style={{ display:'flex', alignItems:'flex-end', gap:6, height: 120, padding: '6px 4px', border:'1px solid rgba(255,255,255,0.08)', borderRadius: 8 }}>
+          {series.map((s:any)=> (
+            <div key={s.date} title={`${s.date}: ${s.count}`} style={{ width: 10, background:'#3b82f6', height: Math.max(4, Math.round(110 * s.count / max)) }} />
+          ))}
+        </div>
+      </div>
+      {/* heatmap */}
+      <div>
+        <div className="text-xs opacity-70 mb-2">Heatmap (dani × sati)</div>
+        <HeatmapGrid data={data?.heatmap || []} />
+      </div>
+    </div>
+  );
+}
+
+function HeatmapGrid({ data }: { data: number[][] }) {
+  const dayLabels = ['Pon','Uto','Sri','Čet','Pet','Sub','Ned'];
+  const max = Math.max(1, ...data.flat());
+  return (
+    <div style={{ display:'grid', gridTemplateColumns: '40px repeat(24, 1fr)', gap: 4 }}>
+      <div />
+      {new Array(24).fill(0).map((_,h)=>(<div key={`h-${h}`} style={{ fontSize:10, textAlign:'center', opacity:.6 }}>{h}</div>))}
+      {data.map((row, i)=> (
+        <React.Fragment key={`r-${i}`}>
+          <div style={{ fontSize:12, opacity:.8 }}>{dayLabels[i] || i}</div>
+          {row.map((v, j)=> {
+            const alpha = v ? (0.2 + 0.8 * (v/max)) : 0.08;
+            return <div key={`c-${i}-${j}`} title={`${v}`} style={{ height: 14, borderRadius: 3, background: `rgba(59,130,246,${alpha})` }} />
+          })}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+function NotesFiles({ user }: { user: User }) {
+  const [notes, setNotes] = React.useState<Array<{id:number;text:string;created_at:string;author_id?:number}>>([]);
+  const [files, setFiles] = React.useState<Array<{id:number;label?:string;url:string;created_at:string}>>([]);
+  const [text, setText] = React.useState('');
+  const load = async ()=> {
+    try { const ns = await apiGET<any[]>(`/api/users/${user.id}/notes`, true); setNotes(ns||[]); } catch {}
+    try { const fs = await apiGET<any[]>(`/api/users/${user.id}/files`, true); setFiles(fs||[]); } catch {}
+  };
+  React.useEffect(()=>{ load(); }, [user.id]);
+  async function addNote() {
+    if (!text.trim()) return;
+    await apiPOST(`/api/users/${user.id}/notes`, { text }, { auth: true });
+    setText('');
+    load();
+  }
+  async function delNote(id: number) { await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/notes/${id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${localStorage.getItem('token')}` } }); load(); }
+  async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]; if (!f) return;
+    const fd = new FormData(); fd.append('file', f);
+    await apiUPLOAD(`/api/users/${user.id}/files`, fd, true);
+    e.currentTarget.value = '';
+    load();
+  }
+  async function delFile(id: number) { await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/files/${id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${localStorage.getItem('token')}` } }); load(); }
+  return (
+    <div className="grid gap-4">
+      <div>
+        <div className="font-medium mb-2">Napomene</div>
+        <div className="flex gap-2">
+          <Input placeholder="Dodaj napomenu" value={text} onChange={(e)=> setText(e.target.value)} onPressEnter={addNote} />
+          <Button type="primary" onClick={addNote}>Dodaj</Button>
+        </div>
+        <div className="grid gap-2 mt-3">
+          {notes.length===0? <div className="text-sm opacity-60">Nema napomena.</div> : notes.map(n=> (
+            <div key={n.id} className="border border-white/10 rounded p-2 flex justify-between items-start">
+              <div>
+                <div className="text-sm">{n.text}</div>
+                <div className="text-xs opacity-60">{new Date(n.created_at).toLocaleString()}</div>
+              </div>
+              <Button size="small" danger onClick={()=> delNote(n.id)}>Obriši</Button>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div className="font-medium mb-2">Prilozi</div>
+        <div className="flex items-center gap-2">
+          <input type="file" onChange={onUpload} />
+        </div>
+        <div className="grid gap-2 mt-3">
+          {files.length===0? <div className="text-sm opacity-60">Nema fajlova.</div> : files.map(f => (
+            <div key={f.id} className="border border-white/10 rounded p-2 flex justify-between items-center">
+              <a href={f.url} target="_blank" rel="noreferrer" className="text-blue-400">{f.label || f.url.split('/').pop()}</a>
+              <Button size="small" danger onClick={()=> delFile(f.id)}>Obriši</Button>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

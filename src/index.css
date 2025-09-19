@@ -162,6 +162,30 @@ body.has-sidebar .table {
 .grid{ display:grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap:12px; }
 label{ font-size:12px; display:flex; flex-direction:column; gap:6px; }
 
+/* AntD form labels were affected by the global label reset above.
+   Restore default inline layout so field labels like "Dobavljač" and "Status" render correctly. */
+.ant-form-item-label > label{
+  display: inline-block !important;
+  flex-direction: initial !important;
+  gap: 0 !important;
+}
+.ant-form-item-required::before{
+  margin-right: 4px;
+}
+
+/* Pretty danger button: red bg + white text, invert on hover */
+.ant-btn.btn-danger-invert{
+  background: #ff4d4f !important;
+  color: #fff !important;
+  border-color: #ff4d4f !important;
+}
+.ant-btn.btn-danger-invert:hover,
+.ant-btn.btn-danger-invert:focus{
+  background: #fff !important;
+  color: #ff4d4f !important;
+  border-color: #ff4d4f !important;
+}
+
 input, select, textarea{
   border:1px solid #d5d8e1;
   border-radius:8px;
@@ -666,3 +690,16 @@ input[type=number] {
 .hdr__iconBtn { position: relative; }
 .hdr__notif .dropdown { right: -8px; }
 .hdr__user .dropdown { right: -2px; }
+
+/* Flash highlight when focusing an arrival via notification click */
+.flash-highlight {
+  animation: flashBg 1.6s ease-out;
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+@keyframes flashBg {
+  0% { background-color: #fff7ed; }
+  60% { background-color: #fffbeb; }
+  100% { background-color: transparent; }
+}

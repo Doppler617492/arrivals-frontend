@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import React from "react";
+import { Card, Button, Select, DatePicker, Input, Space, InputNumber, Switch, Modal, Pagination } from "antd";
+import dayjs, { Dayjs } from "dayjs";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebouncedValue } from "../lib/debounce";
 
 /* =========================
    Types
@@ -165,16 +169,48 @@ function isTruthy(v: any): boolean {
     s === "on"
   );
 }
-const fmtCurrency = (v?: number | null) => {
-  const n = Number(v || 0);
-  // format sa 2 decimale; Excel export dobija raw broj
-  return n.toLocaleString("en-GB", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+// Robust money parsing: accepts "12,345.67", "12.345,67", "$12.345,67", etc.
+const parseMoney = (v: any): number => {
+  if (v === null || v === undefined || v === '') return 0;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  let s = String(v).trim();
+  // Strip currency and non-numeric except separators and minus
+  s = s.replace(/[^0-9,.-\s]/g, '');
+  if (s.includes('.') && s.includes(',')) {
+    // Decide decimal by the right-most separator
+    if (s.lastIndexOf('.') > s.lastIndexOf(',')) {
+      // US style: comma thousands, dot decimal
+      s = s.replace(/,/g, '');
+    } else {
+      // EU style: dot thousands, comma decimal
+      s = s.replace(/\./g, '').replace(/,/g, '.');
+    }
+  } else if (s.includes(',') && !s.includes('.')) {
+    // Only comma present → treat as decimal
+    s = s.replace(/,/g, '.');
+  } else {
+    // Only dot or plain digits → keep
+  }
+  s = s.replace(/\s/g, '');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
 };
+
+function fmtCurrency(v?: number | string | null) {
+  const n = parseMoney(v);
+  // Format parts in EU style, then place symbol in front: $ 12.345,67
+  const nf = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'USD' });
+  const parts = nf.formatToParts(n);
+  const number = parts.filter(p => p.type !== 'currency' && p.type !== 'literal')
+                      .map(p => p.value).join('');
+  // Rebuild number including locale literals (group, decimal)
+  const numberWithLiterals = parts.filter(p => p.type !== 'currency').map(p => p.value).join('');
+  // Safari may already include non‑breaking space before symbol; normalize by removing symbol and trimming
+  const cleaned = numberWithLiterals.replace(/\s*\$/g, '').trim();
+  return `$ ${cleaned}`;
+}
 const sumBy = (rows: Container[], key: keyof Container) =>
-  rows.reduce((acc, r) => acc + (Number(r[key] ?? 0) || 0), 0);
+  rows.reduce((acc, r) => acc + parseMoney(r[key] as any), 0);
 
 // Date helpers: show dd.MM.yy in read-mode; store/send as YYYY-MM-DD
 function toEU(iso?: string) {
@@ -223,14 +259,16 @@ function EditableCell({
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState<any>(row[field] ?? (type === "number" ? 0 : ""));
-  const inputRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
+  const inputRef = useRef<any>(null);
 
   useEffect(() => {
     setValue(row[field] ?? (type === "number" ? 0 : ""));
   }, [row[field]]);
 
   useEffect(() => {
-    if (editing && inputRef.current) inputRef.current.focus();
+    if (editing && inputRef.current && typeof inputRef.current.focus === 'function') {
+      inputRef.current.focus();
+    }
   }, [editing]);
 
   async function commit() {
@@ -248,10 +286,8 @@ function EditableCell({
     setEditing(false);
   }
 
-  function onKey(e: React.KeyboardEvent) {
-    if (e.key === "Enter") commit();
-    if (e.key === "Escape") { setEditing(false); setValue(row[field] ?? ""); }
-  }
+  // Escape to cancel editing when supported inputs have key handlers
+  // AntD inputs commit on blur/Enter; Escape handling is omitted for simplicity.
 
   const baseStyle: React.CSSProperties = { textAlign: align || (isCurrency ? "right" : undefined) };
   const tdClassName = alignToClass(align || (isCurrency ? "right" : "left"));
@@ -286,44 +322,45 @@ function EditableCell({
   // edit mode
   return (
     <td style={baseStyle} className={tdClassName}>
-      {type === "select" && options ? (
-        <select
-          ref={inputRef as any}
-          value={String(value || "")}
-          onChange={(e) => setValue(e.target.value)}
+      {type === 'select' && options ? (
+        <Select
+          ref={inputRef}
+          size="small"
+          value={String(value || '')}
+          onChange={(v) => { setValue(v); commit(); }}
           onBlur={commit}
-          onKeyDown={onKey}
-          className="cell-input"
-          style={{ width: "100%", boxSizing: "border-box" }}
-        >
-          {options.map((op) => (
-            <option key={op} value={op}>{op}</option>
-          ))}
-        </select>
-      ) : type === "date" ? (
-        <input
-          ref={inputRef as any}
-          type="date"
-          value={String(value || "").includes("-") ? String(value || "") : fromEU(String(value || ""))}
-          onChange={(e) => setValue(e.target.value)}
-          onBlur={commit}
-          onKeyDown={onKey}
-          className="cell-input"
-          style={{ width: "100%", boxSizing: "border-box" }}
+          options={options.map(op => ({ label: op, value: op }))}
+          style={{ width: '100%' }}
         />
-      ) : (
-        <input
-          ref={inputRef as any}
-          type={type}
-          value={value as any}
-          onChange={(e) => setValue((type === "number" ? Number((e.target as HTMLInputElement).value) : (e.target as HTMLInputElement).value) as any)}
-          onBlur={commit}
-          onKeyDown={onKey}
-          className={`cell-input${isCurrency ? " right" : ""}`}
-          step={type === "number" ? (isCurrency ? 0.01 : 1) : undefined}
+      ) : type === 'date' ? (
+        <DatePicker
+          ref={inputRef}
+          size="small"
+          value={value ? dayjs(String(value).includes('-') ? String(value) : fromEU(String(value))) : null}
+          onChange={(d) => { setValue(d ? d.format('YYYY-MM-DD') : ''); commit(); }}
+          style={{ width: '100%' }}
+        />
+      ) : type === 'number' ? (
+        <InputNumber
+          ref={inputRef}
+          size="small"
+          value={Number(value ?? 0)}
           min={min}
           max={max}
-          style={{ width: "100%", boxSizing: "border-box" }}
+          step={isCurrency ? 0.01 : 1}
+          onChange={(v) => setValue(Number(v ?? 0))}
+          onBlur={commit}
+          onPressEnter={commit as any}
+          style={{ width: '100%' }}
+        />
+      ) : (
+        <Input
+          ref={inputRef}
+          size="small"
+          value={String(value ?? '')}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={commit}
+          onPressEnter={commit as any}
         />
       )}
     </td>
@@ -359,15 +396,328 @@ export default function ContainersPage() {
   // ---- pagination ----
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(20); // default 20; user-adjustable
+  const [sumScope, setSumScope] = useState<'page' | 'all'>(() => {
+    try { const v = localStorage.getItem('containers.table.sumScope.v1') as 'page'|'all'|null; return v === 'all' ? 'all' : 'page'; } catch { return 'page'; }
+  });
+  const LS_Q = 'containers.table.q.v1';
+  const LS_PAGE = 'containers.table.page.v1';
 
   // ---- filters & sorting (page header) ----
   const [filterSupplier, setFilterSupplier] = useState<string>(""); // empty = all
   const [filterPaid, setFilterPaid] = useState<"all" | "paid" | "unpaid">("all");
+  const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterFrom, setFilterFrom] = useState<string>(""); // ISO date
   const [filterTo, setFilterTo] = useState<string>("");     // ISO date
   const [filterDateField, setFilterDateField] = useState<"eta" | "etd" | "delivery">("eta");
-  const [sortBy, setSortBy] = useState<"id" | "supplier" | "eta" | "etd" | "total" | "balance" | "paid">("eta");
+  const [sortBy, setSortBy] = useState<"id" | "supplier" | "eta" | "etd" | "total" | "balance" | "paid" | "status">("eta");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // ---- column visibility (persisted) ----
+  const ALL_COLS = [
+    'supplier','proforma_no','etd','delivery','eta','cargo_qty','cargo','container_no','roba','contain_price','agent','total','deposit','balance','status','paid','actions'
+  ] as const;
+  type ColKey = typeof ALL_COLS[number];
+  const [visibleCols] = useState<Record<ColKey, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem('containers.table.visibleCols.v1');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return ALL_COLS.reduce((acc:any,k)=>{ acc[k]=true; return acc; },{});
+  });
+  function isColVisible(k: ColKey) { return !!visibleCols[k]; }
+  // Column layout controls removed per request
+  // Column widths (px) persisted
+  const [colWidths] = useState<Record<ColKey, number>>(() => {
+    try { const raw = localStorage.getItem('containers.table.colWidths.v1'); if (raw) return JSON.parse(raw); } catch {}
+    return {} as any;
+  });
+  // Col width setter UI removed; widths still read from storage
+  function getColWidth(k: ColKey, fallback: number): number {
+    const v = colWidths[k] || fallback;
+    // Clamp to reasonable bounds to avoid layout overflow
+    return Math.max(60, Math.min(v, 240));
+  }
+
+  // Tighter default widths to reduce overflow for typical datasets
+  const DEFAULT_COL_WIDTHS: Record<ColKey, number> = {
+    supplier: 140,
+    proforma_no: 120,
+    etd: 100,
+    delivery: 100,
+    eta: 100,
+    cargo_qty: 70,
+    cargo: 90,
+    container_no: 130,
+    roba: 140,
+    contain_price: 100,
+    agent: 120,
+    total: 110,
+    deposit: 110,
+    balance: 110,
+    paid: 110,
+    status: 110,
+    actions: 180,
+  } as const;
+  // Column order (DnD) persisted
+  const [colOrder] = useState<ColKey[]>(() => {
+    try { const raw = localStorage.getItem('containers.table.colOrder.v1'); if (raw) return JSON.parse(raw); } catch {}
+    return [...ALL_COLS];
+  });
+  // Column order save function removed with UI
+  // Drag & drop column ordering UI removed
+
+  // Render helpers (header/new-row/row cells)
+  function renderHeaderCell(k: ColKey) {
+    const labels: Record<ColKey, string> = {
+      supplier:'Dobavljač', proforma_no:'Proforma', etd:'ETD', delivery:'Delivery', eta:'ETA', cargo_qty:'Qty', cargo:'Tip', container_no:'Kontejner', roba:'Roba', contain_price:'Cijena', agent:'Agent', total:'Total', deposit:'Depozit', balance:'Balans', status:'Status', paid:'Plaćanje', actions:'Akcije'
+    } as any;
+    const align = (k==='cargo_qty' || k==='contain_price' || k==='total' || k==='deposit' || k==='balance') ? 'al-right' : (k==='proforma_no' || k==='etd' || k==='delivery' || k==='eta' || k==='paid' || k==='status') ? 'al-center' : 'al-left';
+    return <th key={`h-${k}`} className={align}>{labels[k]}</th>;
+  }
+  function renderNewRowCell(k: ColKey) {
+    switch (k) {
+      case 'supplier':
+        return (
+          <td key={`n-${k}`}>
+            <Input size="small" value={newRow.supplier || ""} onChange={(e) => setNewRow((s) => ({ ...s, supplier: e.target.value }))} />
+          </td>
+        );
+      case 'proforma_no':
+        return (
+          <td key={`n-${k}`} className="al-center">
+            <Input size="small" value={newRow.proforma_no || ""} onChange={(e) => setNewRow((s) => ({ ...s, proforma_no: e.target.value }))} style={{ textAlign: 'center' }} />
+          </td>
+        );
+      case 'etd':
+      case 'delivery':
+      case 'eta': {
+        const iso = (newRow as any)[k] || '';
+        return (
+          <td key={`n-${k}`} className="al-center">
+            <DatePicker
+              size="small"
+              value={iso ? dayjs(iso) : null}
+              onChange={(d) => setNewRow((s) => ({ ...s, [k]: d ? d.format('YYYY-MM-DD') : '' }))}
+            />
+          </td>
+        );
+      }
+      case 'cargo_qty':
+        return (
+          <td key={`n-${k}`} className="al-right">
+            <InputNumber
+              size="small"
+              min={1}
+              max={100000}
+              value={newRow.cargo_qty ?? 1}
+              onChange={(v) => {
+                let n = Number(v ?? 1);
+                if (!Number.isFinite(n) || n < 1) n = 1;
+                if (n > 100000) n = 100000;
+                setNewRow((s) => ({ ...s, cargo_qty: n }));
+              }}
+              style={{ width: 90 }}
+            />
+          </td>
+        );
+      case 'cargo':
+        return (
+          <td key={`n-${k}`}>
+            <Input size="small" value={newRow.cargo || ''} onChange={(e) => setNewRow((s) => ({ ...s, cargo: e.target.value }))} />
+          </td>
+        );
+      case 'container_no':
+        return (
+          <td key={`n-${k}`}>
+            <Input size="small" value={newRow.container_no || ''} onChange={(e) => setNewRow((s) => ({ ...s, container_no: e.target.value }))} />
+          </td>
+        );
+      case 'roba':
+        return (
+          <td key={`n-${k}`}>
+            <Input size="small" value={newRow.roba || ''} onChange={(e) => setNewRow((s) => ({ ...s, roba: e.target.value }))} />
+          </td>
+        );
+      case 'contain_price':
+        return (
+          <td key={`n-${k}`} className="currency-cell al-right">
+            <InputNumber
+              size="small"
+              step={0.01}
+              value={newRow.contain_price ?? 0}
+              onChange={(v) => setNewRow((s) => ({ ...s, contain_price: Number(v ?? 0) }))}
+              style={{ width: 120 }}
+            />
+          </td>
+        );
+      case 'agent':
+        return (
+          <td key={`n-${k}`}>
+            <Input size="small" value={newRow.agent || ''} onChange={(e) => setNewRow((s) => ({ ...s, agent: e.target.value }))} />
+          </td>
+        );
+      case 'total':
+        return (
+          <td key={`n-${k}`} className="currency-cell al-right">
+            <InputNumber
+              size="small"
+              step={0.01}
+              value={newRow.total ?? 0}
+              onChange={(v) => setNewRow((s) => ({ ...s, total: Number(v ?? 0) }))}
+              style={{ width: 120 }}
+            />
+          </td>
+        );
+      case 'deposit':
+        return (
+          <td key={`n-${k}`} className="currency-cell al-right">
+            <InputNumber
+              size="small"
+              step={0.01}
+              value={newRow.deposit ?? 0}
+              onChange={(v) => setNewRow((s) => ({ ...s, deposit: Number(v ?? 0) }))}
+              style={{ width: 120 }}
+            />
+          </td>
+        );
+      case 'balance':
+        return (
+          <td key={`n-${k}`} className="currency-cell al-right">
+            <InputNumber
+              size="small"
+              step={0.01}
+              value={newRow.balance ?? (Number(newRow.total ?? 0) - Number(newRow.deposit ?? 0))}
+              onChange={(v) => setNewRow((s) => ({ ...s, balance: Number(v ?? 0) }))}
+              style={{ width: 120 }}
+            />
+          </td>
+        );
+      case 'paid':
+        return (
+          <td key={`n-${k}`} className="al-center">
+            <Switch
+              size="small"
+              checked={!!newRow.paid}
+              onChange={(checked) => setNewRow((s) => ({ ...s, paid: !!checked }))}
+              checkedChildren="Plaćeno"
+              unCheckedChildren="Nije plaćeno"
+            />
+          </td>
+        );
+      case 'status':
+        return (
+          <td key={`n-${k}`} className="al-center">
+            <Select
+              size="small"
+              value={newRow.status || 'pending'}
+              onChange={(v)=> setNewRow((s)=> ({ ...s, status: String(v) }))}
+              style={{ width: 140 }}
+              options={[
+                { value:'pending', label:'Pending' },
+                { value:'shipped', label:'Shipped' },
+                { value:'arrived', label:'Arrived' },
+                { value:'delivered', label:'Delivered' },
+              ]}
+            />
+          </td>
+        );
+      case 'actions':
+        return (
+          <td key={`n-${k}`} className="actions-cell" style={{ whiteSpace: 'nowrap' }}>
+            <input type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt" style={{ display: 'none' }} ref={newFileInputRef} onChange={(e)=> onPickNewFiles(e.target.files)} />
+            <Space size="small">
+              <Button size="small" onClick={()=> newFileInputRef.current?.click()}>
+                Dodaj fajlove
+              </Button>
+              <Button size="small" type="primary" onClick={saveNewRow}>
+                Sačuvaj
+              </Button>
+              <Button size="small" onClick={cancelNewRow}>
+                Otkaži
+              </Button>
+            </Space>
+          </td>
+        );
+    }
+  }
+  function renderRowCell(k: ColKey, r: Container) {
+    switch (k) {
+      case 'supplier': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="supplier" align="left" onSave={(v)=>patchContainer(r.id,{ supplier: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'proforma_no': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="proforma_no" align="center" onSave={(v)=> updateContainerWithFallbacks(r.id, { proforma_no: String(v||""), proforma:String(v||""), proformaNumber:String(v||""), proformaNo:String(v||""), proforma_number:String(v||""), pf_no:String(v||""), pfNumber:String(v||"") }).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />);
+      case 'etd': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="etd" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ etd: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'delivery': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="delivery" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ delivery: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'eta': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="eta" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ eta: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'cargo_qty': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="cargo_qty" type="number" align="right" onSave={(v)=>patchContainer(r.id,{ cargo_qty: Number(v||0)}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'cargo': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="cargo" align="left" onSave={(v)=>patchContainer(r.id,{ cargo: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'container_no': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="container_no" align="left" onSave={(v)=>patchContainer(r.id,{ container_no: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'roba': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="roba" align="left" onSave={(v)=>patchContainer(r.id,{ roba: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'contain_price': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="contain_price" type="number" isCurrency align="right" onSave={(v)=>patchContainer(r.id,{ contain_price: Number(v||0)}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'agent': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="agent" align="left" onSave={(v)=>patchContainer(r.id,{ agent: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'status': return (
+        <td key={`c-${k}-${r.id}`} className="al-center">
+          <Select
+            size="small"
+            value={(r.status || 'pending') as any}
+            onChange={async (v)=> {
+              const next = String(v);
+              setRows(prev => prev.map(x => x.id===r.id ? { ...x, status: next } : x));
+              try { await updateContainerWithFallbacks(r.id, { status: next }); await qc.invalidateQueries({ queryKey: ['containers'] }); } catch (e) { /* rollback simplistic */ }
+            }}
+            style={{ width: 140 }}
+            options={[
+              { value:'pending', label:'Pending' },
+              { value:'shipped', label:'Shipped' },
+              { value:'arrived', label:'Arrived' },
+              { value:'delivered', label:'Delivered' },
+            ]}
+          />
+        </td>
+      );
+      case 'total': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="total" type="number" isCurrency align="right" onSave={async (v)=>{ let T = parseMoney(v); if (!Number.isFinite(T) || T < 0) { alert('Total ne može biti negativan. Postavljeno na 0.'); T = 0; } const D = parseMoney(r.deposit); const nextBalance = +(T - D).toFixed(2); setRows(prev => prev.map(x => x.id===r.id ? { ...x, total: T, balance: nextBalance } : x)); await patchContainer(r.id,{ total: T}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
+      case 'deposit': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="deposit" type="number" isCurrency align="right" onSave={async (v)=>{ let D = parseMoney(v); if (!Number.isFinite(D) || D < 0) { alert('Depozit ne može biti negativan. Postavljeno na 0.'); D = 0; } const T = parseMoney(r.total); const nextBalance = +(T - D).toFixed(2); setRows(prev => prev.map(x => x.id===r.id ? { ...x, deposit: D, balance: nextBalance } : x)); await patchContainer(r.id,{ deposit: D}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
+      case 'balance': return (
+        <EditableCell
+          key={`c-${k}-${r.id}`}
+          row={r}
+          field="balance"
+          type="number"
+          isCurrency
+          align="right"
+          onSave={async (v)=>{
+            let B = parseMoney(v);
+            if (!Number.isFinite(B) || B < 0) B = 0;
+            setRows(prev => prev.map(x => x.id===r.id ? { ...x, balance: B } : x));
+            await patchContainer(r.id, { balance: B });
+            await qc.invalidateQueries({ queryKey: ['containers'] });
+          }}
+        />
+      );
+      case 'paid': return (
+        <td key={`c-${k}-${r.id}`} className="al-right" style={{ textAlign: 'right' }}>
+          <Switch
+            size="small"
+            checked={!!r.paid}
+            loading={!!toggling[r.id]}
+            onChange={() => togglePaid(r)}
+            checkedChildren="Plaćeno"
+            unCheckedChildren="Nije plaćeno"
+          />
+        </td>
+      );
+      case 'actions': return (
+        <td key={`c-${k}-${r.id}`} className="actions-cell" style={{whiteSpace: 'nowrap'}}>
+          <input type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt" style={{ display: 'none' }} ref={(el) => { fileInputsRef.current[r.id] = el; }} onChange={(e) => uploadFiles(r.id, e.target.files)} />
+          <Space size="small">
+            <Button size="small" onClick={() => listFiles(r.id)}>Fajlovi</Button>
+            <Button size="small" onClick={() => fileInputsRef.current[r.id]?.click()}>Upload</Button>
+            <Button size="small" danger onClick={() => onDelete(r.id)}>Obriši</Button>
+          </Space>
+        </td>
+      );
+    }
+  }
+  // Saved views
+  // Saved views removed per request
 
   // --- pick up global search (?q=...) from URL and apply to table search ---
   const location = useLocation();
@@ -375,8 +725,13 @@ export default function ContainersPage() {
   useEffect(() => {
     // Read ?q whenever URL changes (e.g., Header navigate or manual edit)
     const sp = new URLSearchParams(location.search || "");
-    const q = sp.get("q") || "";
-    setSearchText(q);
+    const q = sp.get("q");
+    if (q !== null) {
+      setSearchText(q);
+    } else {
+      try { const saved = localStorage.getItem(LS_Q) || ''; setSearchText(saved); } catch {}
+      try { const p = Number(localStorage.getItem(LS_PAGE) || ''); if (!Number.isNaN(p) && p >= 1) setPage(p); } catch {}
+    }
   }, [location.search]);
 
   // --- keep URL ?q in sync when user types locally (shareable links) ---
@@ -393,6 +748,7 @@ export default function ContainersPage() {
         pathname: location.pathname,
         search: sp.toString() ? `?${sp.toString()}` : "",
       }, { replace: true });
+      try { localStorage.setItem(LS_Q, next); } catch {}
     }, 300); // small debounce for nicer UX and fewer history entries
     return () => clearTimeout(t);
   }, [searchText, location.pathname, location.search, navigate]);
@@ -439,103 +795,48 @@ export default function ContainersPage() {
   });
 
   /* -------- data -------- */
-  async function refresh() {
-    setLoading(true);
+  const qc = useQueryClient();
+
+  // We need filters first, then reconfigure query using a derived key
+  // (placing this block after filter states)
+
+  // refresh helper removed (unused)
+  // pageSize preference
+  useEffect(() => {
     try {
-      const res = await api.listContainers();
-      const data = (res as any)?.ok ? (res as any).data : res;
-      if (Array.isArray(data)) {
-        const normalized = (data as any[]).map((r: any) => {
-          // --- normalize alternate field names coming from backend ---
-          const proforma_no =
-            r.proforma_no ?? r.proforma ?? r.proformaNo ?? r.proforma_number ?? r.pf_no ?? r.pfNumber ?? "";
-          const container_no =
-            r.container_no ?? r.container ?? r.containerNo ?? r.container_number ?? r.containerno ?? r.containerNum ?? "";
-          const cargo_qtyRaw =
-            r.cargo_qty ?? r.qty ?? r.quantity ?? r.cargoQty ?? r.cargo_quantity ?? null;
-
-          const cargo_qty = cargo_qtyRaw == null ? undefined : Number(cargo_qtyRaw);
-
-          // derive boolean "paid" from several possible backend fields (robust)
-          const paidBool =
-            isTruthy(r.paid) ||
-            isTruthy((r as any).placeno) ||   // ← support Serbian field name from backend
-            isTruthy((r as any).is_paid) ||
-            isTruthy((r as any).isPaid) ||
-            isTruthy((r as any).payment) ||
-            isTruthy((r as any).payment_status) ||
-            isTruthy((r as any).status);
-
-          // --- normalize money fields from multiple possible backend keys and encodings ---
-          const num = (v: any) => {
-            if (v === null || v === undefined || v === "") return 0;
-            if (typeof v === "number") return Number.isFinite(v) ? v : 0;
-            const s0 = String(v).trim();
-            // EU: '.' thousands + ',' decimal
-            if (s0.includes(".") && s0.includes(",")) {
-              const s = s0.replace(/\./g, "").replace(/,/g, ".");
-              const n = Number(s);
-              return Number.isFinite(n) ? n : 0;
-            }
-            if (s0.includes(",") && !s0.includes(".")) {
-              const s = s0.replace(/\s/g, "").replace(/,/g, ".");
-              const n = Number(s);
-              return Number.isFinite(n) ? n : 0;
-            }
-            const n = Number(s0.replace(/\s/g, ""));
-            return Number.isFinite(n) ? n : 0;
-          };
-
-          const contain_price =
-            num(r.contain_price ?? r.price ?? (r as any).cijena ?? (r as any)["cijena"] ?? (r as any)["cijena (eur)"] ?? (r as any).contain_price_eur);
-
-          const total =
-            num(r.total ?? (r as any).ukupno ?? (r as any)["total (eur)"] ?? (r as any).total_eur);
-
-          const deposit =
-            num(r.deposit ?? (r as any).depozit ?? (r as any)["depozit (eur)"] ?? (r as any).deposit_eur);
-
-          const balance =
-            num(r.balance ?? (r as any).balans ?? (r as any)["balans (eur)"] ?? (r as any).balance_eur);
-
-          return {
-            ...r,
-            proforma_no,
-            container_no,
-            cargo_qty,
-            contain_price,
-            total,
-            deposit,
-            balance,
-            paid: !!paidBool,
-          };
-        });
-        setRows(normalized as Container[]);
-        setSelectedIds(prev => {
-          const keep = new Set<number>();
-          normalized.forEach((r: any) => { if (prev.has(Number(r.id))) keep.add(Number(r.id)); });
-          return keep;
-        });
-      } else {
-        setRows([]);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }
-  useEffect(() => {
-    refresh();
-  }, []);
-  useEffect(() => {
-    const id = setInterval(refresh, 300000);
-    return () => clearInterval(id);
+      const ps = Number(localStorage.getItem('containers.table.pageSize.v1') || '');
+      if (!Number.isNaN(ps) && ps > 0) setPageSize(ps);
+    } catch {}
   }, []);
 
   // -------- search & visible rows --------
+  const debouncedSearch = useDebouncedValue(searchText, 300);
+  // Server-side fetch with current filters
+  const serverStatus = filterPaid === 'all' ? '' : (filterPaid as 'paid' | 'unpaid');
+  const serverSortBy = ((): 'created_at' | 'eta' | 'etd' | 'supplier' | 'status' | 'total' | 'balance' | 'id' => {
+    switch (sortBy) {
+      case 'id': return 'id';
+      case 'supplier': return 'supplier';
+      case 'eta': return 'eta';
+      case 'etd': return 'etd';
+      case 'total': return 'total';
+      case 'balance': return 'balance';
+      case 'paid': return 'status';
+      default: return 'created_at';
+    }
+  })();
+  const { data: serverData, isLoading: isServerLoading } = useQuery({
+    queryKey: ['containers', { q: debouncedSearch, status: serverStatus, statusText: filterStatus, dateField: filterDateField, from: filterFrom, to: filterTo, sortBy: serverSortBy, sortDir }],
+    queryFn: async () => {
+      return await api.fetchContainers({ q: debouncedSearch, status: serverStatus as any, statusText: filterStatus || undefined, dateField: filterDateField, from: filterFrom, to: filterTo, sortBy: serverSortBy, sortDir });
+    },
+    refetchOnWindowFocus: false,
+    staleTime: 180_000,
+  });
+  React.useEffect(() => { if (Array.isArray(serverData)) setRows(serverData as any); }, [serverData]);
+  React.useEffect(() => { setLoading(!!isServerLoading); }, [isServerLoading]);
   const filteredRows = React.useMemo(() => {
-    const q = searchText.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
 
     // 1) text search
     let list = rows.filter((r) => {
@@ -592,7 +893,12 @@ export default function ContainersPage() {
       });
     }
 
-    // 5) sorting
+    // 5) status filter
+    if (filterStatus) {
+      list = list.filter(r => String((r as any).status || '') === filterStatus);
+    }
+
+    // 6) sorting
     const toNum = (x: any) => Number(x ?? 0);
     const toStr = (x: any) => String(x ?? "").toLowerCase();
     const cmp = (a: Container, b: Container) => {
@@ -602,9 +908,10 @@ export default function ContainersPage() {
         case "supplier": aa = toStr(a.supplier); bb = toStr(b.supplier); break;
         case "eta": aa = String(a.eta || ""); bb = String(b.eta || ""); break;
         case "etd": aa = String(a.etd || ""); bb = String(b.etd || ""); break;
-        case "total": aa = toNum(a.total); bb = toNum(b.total); break;
-        case "balance": aa = toNum(a.balance); bb = toNum(b.balance); break;
+        case "total": aa = parseMoney(a.total); bb = parseMoney(b.total); break;
+        case "balance": aa = parseMoney(a.balance); bb = parseMoney(b.balance); break;
         case "paid": aa = a.paid ? 1 : 0; bb = b.paid ? 1 : 0; break;
+        case "status": aa = toStr((a as any).status); bb = toStr((b as any).status); break;
         default: aa = 0; bb = 0;
       }
       if (aa < bb) return sortDir === "asc" ? -1 : 1;
@@ -614,7 +921,7 @@ export default function ContainersPage() {
     list = [...list].sort(cmp);
 
     return list;
-  }, [rows, searchText, filterSupplier, filterPaid, filterFrom, filterTo, filterDateField, sortBy, sortDir]);
+  }, [rows, debouncedSearch, filterSupplier, filterPaid, filterFrom, filterTo, filterDateField, sortBy, sortDir]);
 
   // Compute paging
   const totalPages = Math.max(1, Math.ceil(Math.max(filteredRows.length, 1) / pageSize));
@@ -626,14 +933,25 @@ export default function ContainersPage() {
   const firstIdx = (page - 1) * pageSize;
   const lastIdx = firstIdx + pageSize;
   const pagedRows = React.useMemo(() => filteredRows.slice(firstIdx, lastIdx), [filteredRows, firstIdx, lastIdx]);
+  useEffect(()=>{ try { localStorage.setItem(LS_PAGE, String(page)); } catch {} }, [page]);
+  useEffect(()=>{ try { localStorage.setItem('containers.table.sumScope.v1', sumScope); } catch {} }, [sumScope]);
 
   // Footer sums – for the current page only
-  const totalSumVisible = React.useMemo(() => sumBy(pagedRows, "total"), [pagedRows]);
-  const depositSumVisible = React.useMemo(() => sumBy(pagedRows, "deposit"), [pagedRows]);
-  const balanceSumVisible = React.useMemo(() => sumBy(pagedRows, "balance"), [pagedRows]);
-  // When a row is marked as paid, its balance should not count toward the footer total
-  const paidBalanceSumVisible = React.useMemo(() => sumBy(pagedRows.filter(r => !!r.paid), "balance"), [pagedRows]);
-  const netTotalSumVisible = React.useMemo(() => totalSumVisible - paidBalanceSumVisible, [totalSumVisible, paidBalanceSumVisible]);
+  // Page sums
+  const totalSumPage = React.useMemo(() => sumBy(pagedRows, "total"), [pagedRows]);
+  const depositSumPage = React.useMemo(() => sumBy(pagedRows, "deposit"), [pagedRows]);
+  const balanceSumPage = React.useMemo(() => sumBy(pagedRows, "balance"), [pagedRows]);
+  // All filtered sums
+  const totalSumAll = React.useMemo(() => sumBy(filteredRows, "total"), [filteredRows]);
+  const depositSumAll = React.useMemo(() => sumBy(filteredRows, "deposit"), [filteredRows]);
+  const balanceSumAll = React.useMemo(() => sumBy(filteredRows, "balance"), [filteredRows]);
+  // Optional: exclude balances of paid rows for NET (keep for future use)
+  // const paidBalanceSumPage = React.useMemo(() => sumBy(pagedRows.filter(r => !!r.paid), "balance"), [pagedRows]);
+  // Removed unused computed net total
+  // Currently display GROSS totals based on selected scope
+  const totalSum = sumScope === 'page' ? totalSumPage : totalSumAll;
+  const depositSum = sumScope === 'page' ? depositSumPage : depositSumAll;
+  const balanceSum = sumScope === 'page' ? balanceSumPage : balanceSumAll;
 
   /* -------- files -------- */
   async function listFiles(containerId: number) {
@@ -732,7 +1050,7 @@ export default function ContainersPage() {
         const text = await file.text();
         await importFromCSV(text);
         alert("CSV import završen.");
-        await refresh();
+        await qc.invalidateQueries({ queryKey: ['containers'] });
       } else if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
         // Prefer backend if available; gracefully fall back to client-side SheetJS
         try {
@@ -746,13 +1064,13 @@ export default function ContainersPage() {
 
           if (res.ok) {
             alert("Excel import poslan serveru i obrađen.");
-            await refresh();
+            await qc.invalidateQueries({ queryKey: ['containers'] });
           } else {
             // If server says route/method not allowed, try parsing in-browser
             if (res.status === 405 || res.status === 404) {
               await importFromXLSX(file);
               alert("Excel import završen (obrada u pregledaču).");
-              await refresh();
+              await qc.invalidateQueries({ queryKey: ['containers'] });
             } else {
               const msg = await res.text().catch(() => "");
               throw new Error(`Import nije uspio: ${res.status} ${msg}`);
@@ -763,7 +1081,7 @@ export default function ContainersPage() {
           try {
             await importFromXLSX(file);
             alert("Excel import završen (obrada u pregledaču).");
-            await refresh();
+            await qc.invalidateQueries({ queryKey: ['containers'] });
           } catch (xlsxErr: any) {
             throw xlsxErr;
           }
@@ -887,8 +1205,9 @@ export default function ContainersPage() {
       }
     }
 
-    // create sequentially to avoid hammering the API
-    for (let li = headerRow + 1; li < linesRaw.length; li++) {
+    // Create from bottom to top so the first row in the file
+    // (usually highest "redni broj") is created last and gets highest ID
+    for (let li = linesRaw.length - 1; li > headerRow; li--) {
       const cols = parseCSVLine(linesRaw[li]);
       if (cols.length === 0) continue;
 
@@ -896,7 +1215,8 @@ export default function ContainersPage() {
       const toNum = (v: any) => {
         if (v === null || v === undefined || v === "") return 0;
         if (typeof v === "number") return Number.isFinite(v) ? v : 0;
-        const s0 = String(v).trim();
+        // Remove currency symbols and any non-numeric except separators
+        const s0 = String(v).trim().replace(/[^0-9,.-\s]/g, "");
         // If both separators exist, assume EU style ('.' thousands, ',' decimal)
         if (s0.includes(".") && s0.includes(",")) {
           const s = s0.replace(/\./g, "").replace(/,/g, ".");
@@ -946,6 +1266,10 @@ export default function ContainersPage() {
         if (mC) container_no_detected = mC[1].toUpperCase();
       }
 
+      // Handle Cijena (EUR): blank -> '0,00', otherwise keep original text
+      const rawCijena = pick(idx.contain_price);
+      const containPrice = String(rawCijena ?? '').trim() === '' ? '0,00' : String(rawCijena);
+
       const payload: any = {
         supplier: pick(idx.supplier),
         proforma_no,
@@ -965,8 +1289,8 @@ export default function ContainersPage() {
         containerno: container_no_detected,
         containerNum: container_no_detected,
         roba: pick(idx.roba),
-        contain_price: toNum(pick(idx.contain_price)),
-        price: toNum(pick(idx.contain_price)), // extra alias
+        contain_price: containPrice,
+        price: containPrice, // extra alias
         agent: pick(idx.agent),
         total: toNum(pick(idx.total)),
         deposit: toNum(pick(idx.deposit)),
@@ -1081,8 +1405,18 @@ export default function ContainersPage() {
   async function onDelete(id: number) {
     if (!token) return alert("Niste prijavljeni.");
     if (!confirm("Obrisati ovaj kontejner?")) return;
-    await api.deleteContainer(id as any);
-    await refresh();
+    try {
+      const resp = await api.deleteContainer(id as any);
+      if (!resp?.ok) {
+        const msg = (resp as any)?.error || 'Brisanje nije dozvoljeno (potrebne admin ovlasti).';
+        alert(msg);
+        return;
+      }
+      await qc.invalidateQueries({ queryKey: ['containers'] });
+    } catch (e: any) {
+      console.error('Delete failed', e);
+      alert('Brisanje nije uspjelo. Provjerite da li imate ovlasti (admin).');
+    }
   }
   async function bulkDeleteSelected() {
     if (!token) return alert("Niste prijavljeni.");
@@ -1092,13 +1426,25 @@ export default function ContainersPage() {
     try {
       // delete in parallel but not too aggressively
       const ids = Array.from(selectedIds);
-      await Promise.all(ids.map((id) => api.deleteContainer(id as any).catch((e: any) => {
-        console.error("Delete failed for", id, e);
-      })));
-      // optimistically remove from UI and then refresh
-      setRows(prev => prev.filter(r => !selectedIds.has(r.id)));
+      const results = await Promise.all(ids.map(async (id) => {
+        try {
+          const r = await api.deleteContainer(id as any);
+          if (!r?.ok) throw new Error((r as any)?.error || 'forbidden');
+          return { id, ok: true };
+        } catch (e) {
+          console.error('Delete failed for', id, e);
+          return { id, ok: false };
+        }
+      }));
+      const failed = results.filter(r => !r.ok).map(r => r.id);
+      // remove only successfully deleted from UI and then refresh
+      const okIds = new Set(results.filter(r => r.ok).map(r => r.id));
+      setRows(prev => prev.filter(r => okIds.has(r.id) ? false : true));
       clearSelection();
-      await refresh();
+      await qc.invalidateQueries({ queryKey: ['containers'] });
+      if (failed.length) {
+        alert(`Neki zapisi nisu obrisani (npr. bez ovlasti): ${failed.join(', ')}`);
+      }
     } catch (e) {
       console.error(e);
       alert("Masovno brisanje nije uspjelo za neke stavke. Provjerite konzolu.");
@@ -1126,8 +1472,12 @@ export default function ContainersPage() {
     try {
       // Use dedicated endpoint to toggle paid, backend also updates status/balance
       await api.setContainerPaid(row.id as any, nextPaid);
+      await qc.invalidateQueries({ queryKey: ['containers'] });
       // Sync from server to reflect any recomputed fields
       const fresh = await api.getContainer(row.id as any);
+      if ((fresh as any)?.ok && (fresh as any).data) {
+        qc.setQueryData(['containers', Number(row.id)], (old: any) => ({ ...(old || {}), ...(fresh as any).data }));
+      }
       if ((fresh as any)?.ok && (fresh as any).data) {
         const d = (fresh as any).data as any;
         setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, ...d, paid: !!(d.paid ?? d.placeno) } : r)));
@@ -1266,7 +1616,7 @@ export default function ContainersPage() {
         paid: false,
       });
       setNewFiles([]);
-      await refresh();
+      await qc.invalidateQueries({ queryKey: ['containers'] });
     } catch (e) {
       console.error(e);
       alert("Kreiranje nije uspjelo.");
@@ -1298,7 +1648,7 @@ export default function ContainersPage() {
   function exportExcelCSV() {
     const header = [
       "ID","Dobavljač","Proforma","ETD","Delivery","ETA","Qty","Tip","Kontejner","Roba",
-      "Cijena (EUR)","Agent","Total (EUR)","Depozit (EUR)","Balans (EUR)","Plaćeno",
+      "Cijena (USD)","Agent","Total (USD)","Depozit (USD)","Balans (USD)","Plaćeno",
     ];
     const lines = rows.map(r => [
       r.id,
@@ -1417,215 +1767,179 @@ export default function ContainersPage() {
   }
 
   /* -------- render -------- */
-  // Show NET total (gross total minus balances of paid rows) immediately after toggle
-  const totalSum = netTotalSumVisible;
-  const depositSum = depositSumVisible;
-  const balanceSum = balanceSumVisible;
 
   return (
     <div className="content-area flex-1 transition-all duration-300">
-      <div className="page-head card fullbleed" style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 12 }}>
-        <div>
-          {/* TITLE + FILTER TOGGLE */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between" }}>
-            <h1 style={{ margin: 0 }}>Informacije o Kontejnerima</h1>
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => setFiltersOpen((v) => !v)}
-              aria-expanded={filtersOpen}
-              title={filtersOpen ? "Sakrij filtere" : "Prikaži filtere"}
-              style={{ whiteSpace: "nowrap" }}
-            >
-              {filtersOpen ? "Sakrij filtere ▲" : "Prikaži filtere ▼"}
-            </button>
-          </div>
+      <Card
+        className="page-head fullbleed"
+        title={<span>Informacije o Kontejnerima</span>}
+        extra={
+          <Space wrap>
+            <Button type="primary" onClick={() => setShowNewRow((v) => !v)}>
+              {showNewRow ? "Zatvori unos" : "Novi unos"}
+            </Button>
+            <Button danger disabled={selectedIds.size === 0} onClick={bulkDeleteSelected} title="Obriši selektovane redove">
+              Obriši selektovane
+            </Button>
+            <input
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              ref={importInputRef}
+              style={{ display: "none" }}
+              onChange={(e) => onImportFiles(e.target.files)}
+            />
+            <Button onClick={onClickImport}>Import</Button>
+            <Button onClick={exportExcelCSV}>Export Excel</Button>
+            <Button onClick={exportPDF}>Export PDF</Button>
+            <Button onClick={() => setFiltersOpen((v) => !v)} type="default">
+              {filtersOpen ? "Sakrij filtere" : "Prikaži filtere"}
+            </Button>
+          </Space>
+        }
+        styles={{ body: { paddingTop: 8 } }}
+      >
+        {filtersOpen && (
+          <Space direction="vertical" style={{ width: "100%" }} size="middle">
+            <Space wrap align="center">
+              <span aria-hidden title="Dobavljač">📦</span>
+              <span style={{ fontSize: 12, opacity: 0.8 }}>Dobavljač</span>
+              <Select
+                style={{ minWidth: 160 }}
+                value={filterSupplier || undefined}
+                allowClear
+                placeholder="Svi"
+                options={[{ label: "Svi", value: "" }].concat(supplierOptions.map(s => ({ label: s, value: s })))}
+                onChange={(v) => setFilterSupplier(v || "")}
+              />
 
-          {/* FILTERS BAR */}
-          {filtersOpen && (
-            <div
-              className="filters-bar"
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 12,
-                alignItems: "center",
-                marginTop: 10,
-              }}
-            >
-              {/* Dobavljač */}
-              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span aria-hidden="true" title="Dobavljač">📦</span>
-                <label style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap" }}>Dobavljač</label>
-                <select className="input" value={filterSupplier} onChange={(e) => setFilterSupplier(e.target.value)}>
-                  <option value="">Svi</option>
-                  {supplierOptions.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
+              <span aria-hidden title="Plaćanje">💳</span>
+              <span style={{ fontSize: 12, opacity: 0.8 }}>Plaćanje</span>
+              <Select
+                style={{ width: 140 }}
+                value={filterPaid}
+                onChange={(v) => setFilterPaid(v as any)}
+                options={[
+                  { label: "Svi", value: "all" },
+                  { label: "Plaćeni", value: "paid" },
+                  { label: "Neplaćeni", value: "unpaid" },
+                ]}
+              />
 
-              {/* Status */}
-              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span aria-hidden="true" title="Status">💳</span>
-                <label style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap" }}>Status</label>
-                <select className="input" value={filterPaid} onChange={(e) => setFilterPaid(e.target.value as any)}>
-                  <option value="all">Svi</option>
-                  <option value="paid">Plaćeni</option>
-                  <option value="unpaid">Neplaćeni</option>
-                </select>
-              </div>
+              <span aria-hidden title="Status">🏷️</span>
+              <span style={{ fontSize: 12, opacity: 0.8 }}>Status</span>
+              <Select
+                style={{ width: 160 }}
+                value={filterStatus || undefined}
+                onChange={(v) => setFilterStatus(v || "")}
+                allowClear
+                placeholder="Svi"
+                options={[{ label: "Svi", value: "" }].concat(Array.from(new Set(rows.map(r => String((r as any).status || '')).filter(Boolean))).sort().map(s => ({ label: s, value: s })))}
+              />
 
-              {/* Datum raspon */}
-              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span aria-hidden="true" title="Datum">📅</span>
-                <label style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap" }}>Datum</label>
-                <select className="input" value={filterDateField} onChange={(e) => setFilterDateField(e.target.value as any)}>
-                  <option value="eta">ETA</option>
-                  <option value="etd">ETD</option>
-                  <option value="delivery">Delivery</option>
-                </select>
-                <input className="input" type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} />
-                <span style={{ opacity: 0.7 }}>–</span>
-                <input className="input" type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} />
-              </div>
+              <span aria-hidden title="Datum">📅</span>
+              <span style={{ fontSize: 12, opacity: 0.8 }}>Datum</span>
+              <Select
+                style={{ width: 140 }}
+                value={filterDateField}
+                onChange={(v) => setFilterDateField(v as any)}
+                options={[
+                  { label: "ETA", value: "eta" },
+                  { label: "ETD", value: "etd" },
+                  { label: "Delivery", value: "delivery" },
+                ]}
+              />
+              <DatePicker
+                value={filterFrom ? dayjs(filterFrom) : null}
+                onChange={(d: Dayjs | null) => setFilterFrom(d ? d.format("YYYY-MM-DD") : "")}
+              />
+              <span style={{ opacity: 0.7 }}>–</span>
+              <DatePicker
+                value={filterTo ? dayjs(filterTo) : null}
+                onChange={(d: Dayjs | null) => setFilterTo(d ? d.format("YYYY-MM-DD") : "")}
+              />
 
-              {/* Sortiranje */}
-              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span aria-hidden="true" title="Sortiraj">↕️</span>
-                <label style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap" }}>Sortiraj po</label>
-                <select className="input" value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}>
-                  <option value="eta">ETA</option>
-                  <option value="etd">ETD</option>
-                  <option value="total">Total</option>
-                  <option value="balance">Balans</option>
-                  <option value="supplier">Dobavljač</option>
-                  <option value="paid">Plaćanje</option>
-                  <option value="id">#</option>
-                </select>
-                <select className="input" value={sortDir} onChange={(e) => setSortDir(e.target.value as any)}>
-                  <option value="asc">Rastuće</option>
-                  <option value="desc">Opadajuće</option>
-                </select>
-              </div>
+              <span aria-hidden title="Sortiraj">↕️</span>
+              <span style={{ fontSize: 12, opacity: 0.8 }}>Sortiraj po</span>
+              <Select
+                style={{ width: 160 }}
+                value={sortBy}
+                onChange={(v) => setSortBy(v as any)}
+                options={[
+                  { label: "ETA", value: "eta" },
+                  { label: "ETD", value: "etd" },
+                  { label: "Total", value: "total" },
+                  { label: "Balans", value: "balance" },
+                  { label: "Dobavljač", value: "supplier" },
+                  { label: "Plaćanje", value: "paid" },
+                  { label: "#", value: "id" },
+                ]}
+              />
+              <Select
+                style={{ width: 140 }}
+                value={sortDir}
+                onChange={(v) => setSortDir(v as any)}
+                options={[
+                  { label: "Rastuće", value: "asc" },
+                  { label: "Opadajuće", value: "desc" },
+                ]}
+              />
 
-              {/* Pretraga */}
-              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6, flex: "1 1 260px" }}>
-                <span aria-hidden="true" title="Pretraga">🔎</span>
-                <label style={{ fontSize: 12, opacity: 0.8, whiteSpace: "nowrap" }}>Pretraga</label>
-                <div style={{ position: "relative", flex: 1, display: "flex", alignItems: "center", gap: 6 }}>
-                  <input
-                    type="search"
-                    className="input"
-                    placeholder="dobavljač, proforma, kontejner, agent, …"
-                    value={searchText}
-                    onChange={(e) => setSearchText(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => setSearchText(searchText)}
-                    title="Primijeni pretragu"
-                    style={{ whiteSpace: "nowrap" }}
-                  >
-                    Pretraži
-                  </button>
-                  {searchText && (
-                    <button
-                      type="button"
-                      aria-label="Očisti pretragu"
-                      onClick={() => setSearchText("")}
-                      className="btn ghost"
-                      title="Očisti"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              </div>
+              <Button
+                onClick={() => {
+                  setFilterSupplier("");
+                  setFilterPaid("all");
+                  setFilterFrom("");
+                  setFilterTo("");
+                  setFilterDateField("eta");
+                  setSortBy("eta");
+                  setSortDir("asc");
+                  setSearchText("");
+                }}
+              >
+                Reset
+              </Button>
+            </Space>
 
-              {/* Reset – niži prioritet, sivi ton */}
-              <div className="filter-item" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <button
-                  type="button"
-                  className="btn ghost"
-                  onClick={() => {
-                    setFilterSupplier("");
-                    setFilterPaid("all");
-                    setFilterFrom("");
-                    setFilterTo("");
-                    setFilterDateField("eta");
-                    setSortBy("eta");
-                    setSortDir("asc");
-                    setSearchText("");
-                  }}
-                  title="Resetuj filtere"
-                >
-                  Reset
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+            <Space style={{ width: "100%" }}>
+              <Input.Search
+                allowClear
+                style={{ maxWidth: 460, flex: 1 }}
+                placeholder="dobavljač, proforma, kontejner, agent, …"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                onSearch={(v) => setSearchText(v)}
+              />
+            </Space>
+          </Space>
+        )}
+      </Card>
 
-        <div className="head-actions" style={{ display: "flex", gap: 8, alignItems: "center", justifySelf: "end" }}>
-          <button type="button" className="btn" onClick={() => setShowNewRow((v) => !v)}>
-            {showNewRow ? "Zatvori unos" : "Novi unos"}
-          </button>
-          <button
-            type="button"
-            className="btn danger"
-            disabled={selectedIds.size === 0}
-            onClick={bulkDeleteSelected}
-            title="Obriši selektovane redove"
-          >
-            Obriši selektovane
-          </button>
-          <input
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            ref={importInputRef}
-            style={{ display: "none" }}
-            onChange={(e) => onImportFiles(e.target.files)}
-          />
-          <button className="btn" onClick={onClickImport}>Import</button>
-          <button className="btn ghost" onClick={exportExcelCSV}>Export Excel</button>
-          <button className="btn ghost" onClick={exportPDF}>Export PDF</button>
-        </div>
-      </div>
-
-      <div className="card table-wrap fullbleed">
+      <Card className="table-wrap fullbleed" styles={{ body: { overflowX: "auto", paddingTop: 12 } }}>
         {loading ? (
           <p style={{ padding: 12 }}>Učitavanje…</p>
         ) : (
           <>
-          {/* Pagination controls (top) */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <label style={{ fontSize: 12, color: '#4b5563' }}>Redova po strani:</label>
-              <select
+          {/* Pagination controls (top, AntD) */}
+          <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 8 }} align="center">
+            <Space align="center">
+              <span style={{ fontSize: 12, color: '#4b5563' }}>Redova po strani:</span>
+              <Select
                 value={pageSize}
-                onChange={(e)=>{ setPageSize(Number(e.target.value)); setPage(1); }}
-                className="cell-input"
-                style={{ width: 90, height: 28 }}
-              >
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-              </select>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button type="button" className="btn small ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>
-              Prethodna
-            </button>
-            <span className="al-center" style={{ alignSelf: "center", fontSize: 12 }}>
-              Stranica {page} / {totalPages}
-            </span>
-            <button type="button" className="btn small" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
-              Sledeća
-            </button>
-            </div>
-          </div>
+                style={{ width: 100 }}
+                options={[{value:10,label:'10'},{value:20,label:'20'},{value:50,label:'50'}]}
+                onChange={(n)=>{ setPageSize(n); setPage(1); try { localStorage.setItem('containers.table.pageSize.v1', String(n)); } catch {} }}
+              />
+            </Space>
+            <Space align="center">
+              <Pagination simple current={page} pageSize={pageSize} total={filteredRows.length} onChange={(p)=> setPage(p)} />
+              <Space align="center">
+                <span style={{ fontSize: 12, color: '#4b5563' }}>Sume:</span>
+                <Select value={sumScope} style={{ width: 120 }} options={[{value:'page',label:'Stranica'},{value:'all',label:'Sve'}]} onChange={(v)=> setSumScope(v as any)} />
+              </Space>
+            </Space>
+          </Space>
+
+          {/* Secondary toolbar removed per request (exports, saved views, Kolone panel) */}
 
           <table
             className="table responsive"
@@ -1636,38 +1950,10 @@ export default function ContainersPage() {
               <col style={{ width: "36px" }} />
               {/* # */}
               <col style={{ width: "56px" }} />
-              {/* Dobavljač */}
-              <col style={{ width: "10%" }} />
-              {/* Proforma */}
-              <col style={{ width: "8%" }} />
-              {/* ETD */}
-              <col style={{ width: "5%" }} />
-              {/* Delivery */}
-              <col style={{ width: "5%" }} />
-              {/* ETA */}
-              <col style={{ width: "5%" }} />
-              {/* Qty */}
-              <col style={{ width: "4%" }} />
-              {/* Tip */}
-              <col style={{ width: "5%" }} />
-              {/* Kontejner */}
-              <col style={{ width: "7%" }} />
-              {/* Roba */}
-              <col style={{ width: "9%" }} />
-              {/* Cijena */}
-              <col style={{ width: "6%" }} />
-              {/* Agent */}
-              <col style={{ width: "6%" }} />
-              {/* Total */}
-              <col style={{ width: "6%" }} />
-              {/* Depozit */}
-              <col style={{ width: "6%" }} />
-              {/* Balans */}
-              <col style={{ width: "6%" }} />
-              {/* Plaćanje */}
-              <col style={{ width: "110px" }} />
-              {/* Akcije */}
-              <col style={{ width: "180px" }} />
+              {colOrder.filter(isColVisible).map((k) => {
+                const w = getColWidth(k as any, DEFAULT_COL_WIDTHS[k]);
+                return (<col key={`c-${k}`} style={{ width: `${w}px` }} />);
+              })}
             </colgroup>
             <thead>
               <tr>
@@ -1699,22 +1985,7 @@ export default function ContainersPage() {
                   />
                 </th>
                 <th className="al-center">#</th>
-                <th className="al-left">Dobavljač</th>
-                <th className="al-center">Proforma</th>
-                <th className="al-center">ETD</th>
-                <th className="al-center">Delivery</th>
-                <th className="al-center">ETA</th>
-                <th className="al-right">Qty</th>
-                <th className="al-left">Tip</th>
-                <th className="al-left">Kontejner</th>
-                <th className="al-left">Roba</th>
-                <th className="al-right">Cijena</th>
-                <th className="al-left">Agent</th>
-                <th className="al-right">Total</th>
-                <th className="al-right">Depozit</th>
-                <th className="al-right">Balans</th>
-                <th className="al-center">Plaćanje</th>
-                <th className="al-center" style={{ width: 180 }}>Akcije</th>
+                {colOrder.filter(isColVisible).map(renderHeaderCell)}
               </tr>
             </thead>
             <tbody>
@@ -1722,76 +1993,7 @@ export default function ContainersPage() {
                 <tr className="new-row compact">
                   <td></td>
                   <td>—</td>
-                  <td><input className="cell-input compact" value={newRow.supplier || ""} onChange={(e) => setNewRow((s) => ({ ...s, supplier: e.target.value }))} /></td>
-                  <td className="al-center"><input className="cell-input compact" value={newRow.proforma_no || ""} onChange={(e) => setNewRow((s) => ({ ...s, proforma_no: e.target.value }))} style={{ textAlign:'center' }} /></td>
-                  <td><input className="cell-input compact" type="date" value={newRow.etd || ""} onChange={(e) => setNewRow((s) => ({ ...s, etd: e.target.value }))} style={{ textAlign: "center" }} /></td>
-                  <td><input className="cell-input compact" type="date" value={newRow.delivery || ""} onChange={(e) => setNewRow((s) => ({ ...s, delivery: e.target.value }))} style={{ textAlign: "center" }} /></td>
-                  <td><input className="cell-input compact" type="date" value={newRow.eta || ""} onChange={(e) => setNewRow((s) => ({ ...s, eta: e.target.value }))} style={{ textAlign: "center" }} /></td>
-                  <td className="al-right">
-                    <input
-                      className="cell-input compact"
-                      type="number"
-                      step="1"
-                      min={1}
-                      max={100000}
-                      value={newRow.cargo_qty ?? 1}
-                      onChange={(e) => {
-                        let v = parseInt(e.target.value || "0", 10);
-                        if (isNaN(v)) v = 1;
-                        if (v < 1) v = 1;
-                        if (v > 100000) v = 100000;
-                        setNewRow((s) => ({ ...s, cargo_qty: v }));
-                      }}
-                      style={{ textAlign: "right", maxWidth: 80 }}
-                    />
-                  </td>
-                  <td><input className="cell-input compact" value={newRow.cargo || ""} onChange={(e) => setNewRow((s) => ({ ...s, cargo: e.target.value }))} /></td>
-                  <td><input className="cell-input compact" value={newRow.container_no || ""} onChange={(e) => setNewRow((s) => ({ ...s, container_no: e.target.value }))} /></td>
-                  <td><input className="cell-input compact" value={newRow.roba || ""} onChange={(e) => setNewRow((s) => ({ ...s, roba: e.target.value }))} /></td>
-                  <td className="currency-cell">
-                    <input className="cell-input right compact" type="number" step="0.01" value={newRow.contain_price ?? 0} onChange={(e) => setNewRow((s) => ({ ...s, contain_price: Number(e.target.value) }))} style={{ textAlign: "right" }} />
-                  </td>
-                  <td><input className="cell-input compact" value={newRow.agent || ""} onChange={(e) => setNewRow((s) => ({ ...s, agent: e.target.value }))} /></td>
-                  <td className="currency-cell">
-                    <input className="cell-input right compact" type="number" step="0.01" value={newRow.total ?? 0} onChange={(e) => setNewRow((s) => ({ ...s, total: Number(e.target.value) }))} style={{ textAlign: "right" }} />
-                  </td>
-                  <td className="currency-cell">
-                    <input className="cell-input right compact" type="number" step="0.01" value={newRow.deposit ?? 0} onChange={(e) => setNewRow((s) => ({ ...s, deposit: Number(e.target.value) }))} style={{ textAlign: "right" }} />
-                  </td>
-                  <td className="currency-cell">
-                    <input className="cell-input right compact" type="number" step="0.01" value={newRow.balance ?? 0} onChange={(e) => setNewRow((s) => ({ ...s, balance: Number(e.target.value) }))} style={{ textAlign: "right" }} />
-                  </td>
-                  <td className="al-right" style={{ textAlign: "right" }}>
-                    <button
-                      type="button"
-                      className={`status-button ${newRow.paid ? "status-paid" : "status-unpaid"}`}
-                      title="Promijeni status plaćanja"
-                      onClick={() => setNewRow((s) => ({ ...s, paid: !s.paid }))}
-                    >
-                      {newRow.paid ? "Plaćeno" : "Nije plaćeno"}
-                    </button>
-                  </td>
-                  <td className="actions-cell" style={{whiteSpace: "nowrap"}}>
-                    <input
-                      type="file"
-                      multiple
-                      accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt"
-                      style={{ display: "none" }}
-                      ref={newFileInputRef}
-                      onChange={(e) => onPickNewFiles(e.target.files)}
-                    />
-                    <div className="row-actions compact">
-                      <button type="button" className="btn small ghost" onClick={() => newFileInputRef.current?.click()}>
-                        Dodaj fajlove
-                      </button>
-                      <button type="button" className="btn small" onClick={saveNewRow}>
-                        Sačuvaj
-                      </button>
-                      <button type="button" className="btn small ghost" onClick={cancelNewRow}>
-                        Otkaži
-                      </button>
-                    </div>
-                  </td>
+                  {colOrder.filter(isColVisible).map(renderNewRowCell)}
                 </tr>
               )}
 
@@ -1821,101 +2023,7 @@ export default function ContainersPage() {
                     />
                   </td>
                   <td className="al-center">{r.id}</td>
-                  <EditableCell row={r} field="supplier" align="left" onSave={(v)=>patchContainer(r.id,{ supplier: String(v||"")}).then(refresh)} />
-                  <EditableCell
-                    row={r}
-                    field="proforma_no"
-                    align="center"
-                    onSave={(v) =>
-                      updateContainerWithFallbacks(r.id, {
-                        proforma_no: String(v || ""),
-                        proforma: String(v || ""),
-                        proformaNumber: String(v || ""),
-                        proformaNo: String(v || ""),
-                        proforma_number: String(v || ""),
-                        pf_no: String(v || ""),
-                        pfNumber: String(v || ""),
-                      }).then(refresh)
-                    }
-                  />
-                  <EditableCell row={r} field="etd" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ etd: String(v||"")}).then(refresh)} />
-                  <EditableCell row={r} field="delivery" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ delivery: String(v||"")}).then(refresh)} />
-                  <EditableCell row={r} field="eta" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ eta: String(v||"")}).then(refresh)} />
-                  <EditableCell
-                    row={r}
-                    field="cargo_qty"
-                    type="number"
-                    align="right"
-                    min={1}
-                    max={100000}
-                    onSave={(v) =>
-                      updateContainerWithFallbacks(r.id, {
-                        cargo_qty: Number(v || 0),
-                        qty: Number(v || 0),
-                        quantity: Number(v || 0),
-                        cargoQty: Number(v || 0),
-                        cargo_quantity: Number(v || 0),
-                      }).then(refresh)
-                    }
-                  />
-                  <EditableCell row={r} field="cargo" align="left" onSave={(v)=>patchContainer(r.id,{ cargo: String(v||"")}).then(refresh)} />
-                  <EditableCell
-                    row={r}
-                    field="container_no"
-                    align="left"
-                    onSave={(v) =>
-                      updateContainerWithFallbacks(r.id, {
-                        container_no: String(v || ""),
-                        container: String(v || ""),
-                        containerNo: String(v || ""),
-                        container_number: String(v || ""),
-                        containerno: String(v || ""),
-                        containerNum: String(v || ""),
-                      }).then(refresh)
-                    }
-                  />
-                  <EditableCell row={r} field="roba" align="left" onSave={(v)=>patchContainer(r.id,{ roba: String(v||"")}).then(refresh)} />
-                  <EditableCell row={r} field="contain_price" type="number" isCurrency align="right" onSave={(v)=>patchContainer(r.id,{ contain_price: Number(v||0)}).then(refresh)} />
-                  <EditableCell row={r} field="agent" align="left" onSave={(v)=>patchContainer(r.id,{ agent: String(v||"")}).then(refresh)} />
-                  <EditableCell row={r} field="total" type="number" isCurrency align="right" onSave={(v)=>patchContainer(r.id,{ total: Number(v||0)}).then(refresh)} />
-                  <EditableCell row={r} field="deposit" type="number" isCurrency align="right" onSave={(v)=>patchContainer(r.id,{ deposit: Number(v||0)}).then(refresh)} />
-                  <EditableCell row={r} field="balance" type="number" isCurrency align="right" onSave={(v)=>patchContainer(r.id,{ balance: Number(v||0)}).then(refresh)} />
-                  <td className="al-right" style={{ textAlign: "right" }}>
-                    <button
-                      type="button"
-                      className={`status-button ${r.paid ? "status-paid" : "status-unpaid"}`}
-                      title="Promijeni status plaćanja"
-                      onClick={() => togglePaid(r)}
-                      disabled={!!toggling[r.id]}
-                    >
-                      {toggling[r.id] ? "…" : (r.paid ? "Plaćeno" : "Nije plaćeno")}
-                    </button>
-                  </td>
-                  <td className="actions-cell" style={{whiteSpace: "nowrap"}}>
-                    <input
-                      type="file"
-                      multiple
-                      accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt"
-                      style={{ display: "none" }}
-                      ref={(el) => { fileInputsRef.current[r.id] = el; }}
-                      onChange={(e) => uploadFiles(r.id, e.target.files)}
-                    />
-                    <div className="row-actions">
-                      <button type="button" className="btn small ghost" onClick={() => listFiles(r.id)}>
-                        Fajlovi
-                      </button>
-                      <button
-                        type="button"
-                        className="btn small"
-                        onClick={() => fileInputsRef.current[r.id]?.click()}
-                      >
-                        Upload
-                      </button>
-                      <button type="button" className="btn small danger" onClick={() => onDelete(r.id)}>
-                        Obriši
-                      </button>
-                    </div>
-                  </td>
+                  {colOrder.filter(isColVisible).map(k => renderRowCell(k, r))}
                 </tr>
               ))}
             </tbody>
@@ -1931,110 +2039,76 @@ export default function ContainersPage() {
             </tfoot>
           </table>
 
-          {/* Pagination controls (bottom) */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <label style={{ fontSize: 12, color: '#4b5563' }}>Redova po strani:</label>
-              <select
+          {/* Pagination controls (bottom, AntD) */}
+          <Space style={{ width: '100%', justifyContent: 'space-between', marginTop: 8 }} align="center">
+            <Space align="center">
+              <span style={{ fontSize: 12, color: '#4b5563' }}>Redova po strani:</span>
+              <Select
                 value={pageSize}
-                onChange={(e)=>{ setPageSize(Number(e.target.value)); setPage(1); }}
-                className="cell-input"
-                style={{ width: 90, height: 28 }}
-              >
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-              </select>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button type="button" className="btn small ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>
-              Prethodna
-            </button>
-            <span className="al-center" style={{ alignSelf: "center", fontSize: 12 }}>
-              Stranica {page} / {totalPages}
-            </span>
-            <button type="button" className="btn small" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
-              Sledeća
-            </button>
-            </div>
-          </div>
+                style={{ width: 100 }}
+                options={[{value:10,label:'10'},{value:20,label:'20'},{value:50,label:'50'}]}
+                onChange={(n)=>{ setPageSize(n); setPage(1); try { localStorage.setItem('containers.table.pageSize.v1', String(n)); } catch {} }}
+              />
+            </Space>
+            <Pagination simple current={page} pageSize={pageSize} total={filteredRows.length} onChange={(p)=> setPage(p)} />
+          </Space>
           </>
         )}
-      </div>
+      </Card>
 
-      {filesModalId !== null && (
-        <div
-          className="modal-backdrop"
-          onClick={() => {
-            setFilesModalId(null);
-            setPreviewUrl(null);
-            setPreviewName(null);
-          }}
-        >
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <strong>Fajlovi za kontejner #{filesModalId}</strong>
-              <button
-                className="btn small ghost"
-                onClick={() => {
-                  setFilesModalId(null);
-                  setPreviewUrl(null);
-                  setPreviewName(null);
-                }}
-              >
-                Zatvori
-              </button>
-            </div>
-            {filesLoading ? (
-              <p>Učitavanje…</p>
-            ) : filesList.length === 0 ? (
-              <p>Nema fajlova.</p>
-            ) : (
-              <>
-                <ul className="files">
-                  {filesList.map((f: FileMeta) => (
-                    <li key={f.id}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
-                        <a
-                          href={f.url || `${API_BASE}/api/containers/${filesModalId ?? 0}/files/${f.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            const url = f.url || `${API_BASE}/api/containers/${filesModalId ?? 0}/files/${f.id}`;
-                            setPreviewUrl(url);
-                            setPreviewName(f.filename);
-                          }}
-                        >
-                          {f.filename}
-                        </a>
-                        <button className="btn xsmall danger" onClick={() => deleteFile(filesModalId, f.id)}>
-                          Obriši
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-                {previewUrl && (
-                  <div style={{ marginTop: 12, position: "relative" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                      <strong>Pregled: {previewName}</strong>
-                      <button className="btn xsmall ghost" onClick={() => { setPreviewUrl(null); setPreviewName(null); }}>
-                        Zatvori pregled
-                      </button>
-                    </div>
-                    <iframe
-                      src={previewUrl}
-                      style={{ width: "100%", height: "400px", border: "1px solid #ccc", borderRadius: 8 }}
-                      title={`Preview of ${previewName}`}
-                    />
+      <Modal
+        open={filesModalId !== null}
+        onCancel={() => { setFilesModalId(null); setPreviewUrl(null); setPreviewName(null); }}
+        title={filesModalId !== null ? `Fajlovi za kontejner #${filesModalId}` : 'Fajlovi'}
+        footer={null}
+        width={720}
+      >
+        {filesLoading ? (
+          <p>Učitavanje…</p>
+        ) : filesList.length === 0 ? (
+          <p>Nema fajlova.</p>
+        ) : (
+          <>
+            <ul className="files" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {filesList.map((f: FileMeta) => (
+                <li key={f.id} style={{ padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                    <a
+                      href={f.url || `${API_BASE}/api/containers/${filesModalId ?? 0}/files/${f.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        const url = f.url || `${API_BASE}/api/containers/${filesModalId ?? 0}/files/${f.id}`;
+                        setPreviewUrl(url);
+                        setPreviewName(f.filename);
+                      }}
+                    >
+                      {f.filename}
+                    </a>
+                    <Button size="small" danger onClick={() => deleteFile(filesModalId as number, f.id)}>
+                      Obriši
+                    </Button>
                   </div>
-                )}
-              </>
+                </li>
+              ))}
+            </ul>
+            {previewUrl && (
+              <div style={{ marginTop: 12, position: 'relative' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <strong>Pregled: {previewName}</strong>
+                  <Button size="small" onClick={() => { setPreviewUrl(null); setPreviewName(null); }}>Zatvori pregled</Button>
+                </div>
+                <iframe
+                  src={previewUrl}
+                  style={{ width: '100%', height: '400px', border: '1px solid #ccc', borderRadius: 8 }}
+                  title={`Preview of ${previewName}`}
+                />
+              </div>
             )}
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Modal>
 
     
     </div>

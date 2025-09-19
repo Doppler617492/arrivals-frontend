@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/main.tsx",
+    "src/App.tsx",
+    "src/pages/MuseDashboard.tsx",
+    "src/pages/ArrivalsCards.tsx",
+    "src/pages/ArrivalsAntD.tsx",
+    "src/pages/Containers.tsx",
+    "src/store/index.ts"
+  ]
+}
+

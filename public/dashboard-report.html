@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="hr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Arrivals Dashboard — Strateški izvještaj</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif; line-height: 1.6; color: #111827; padding: 24px; max-width: 980px; margin: auto; }
+    h1,h2,h3 { color: #0f172a; }
+    h1 { font-size: 28px; }
+    h2 { font-size: 22px; margin-top: 1.5em; }
+    h3 { font-size: 18px; margin-top: 1.25em; }
+    code, pre { background: #f8fafc; padding: 2px 4px; border-radius: 4px; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
+    .muted { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <h1>Strateški tehnološki sklop i ključne arhitektonske odluke</h1>
+  <p>Ovo izvješće pruža sveobuhvatnu tehničku validaciju i poboljšanja predloženog plana za redizajn "Arrivals Dashboarda". Predloženi tehnološki sklop iznimno je moderan i robustan te se temelji na dokazanim praksama za razvoj aplikacija koje se oslanjaju na podatke. Kombinacija Reacta i TypeScripta osigurava pouzdan, skalabilan i dobro strukturiran temelj za razvoj korisničkog sučelja. Odabir Vitea kao alata za izgradnju, zajedno s TanStack Queryjem za upravljanje podacima i TanStack Tableom za složene prikaze, jasno pokazuje usmjerenost na performanse i učinkovito programiranje.</p>
+
+  <h2>1.1 Arhitektura poslovne nadzorne ploče: model jednostranične aplikacije (SPA)</h2>
+  <p>Predložena arhitektura jednostranične aplikacije (SPA) je optimalna za internu, autentificiranu i vrlo interaktivnu aplikaciju. UI se učita jednom, a prijelazi su brzi i fluidni. SSR/SSG (npr. Next.js) primarno koristi javni web (SEO/TTFB), što ovdje nije prioritet.</p>
+
+  <h2>1.2 Detaljna analiza i opravdanost tehnološkog sklopa</h2>
+  <h3>Vite naspram Webpacka</h3>
+  <p>Vite koristi ESM i pruža vrlo brzo pokretanje i HMR. Webpack je robustan, ali kompleksniji i sporiji za HMR u većim aplikacijama. Module Federation nije potreban.</p>
+  <h3>shadcn/ui (Radix)</h3>
+  <p>shadcn/ui je distribucija koda – komponente su u vlasništvu projekta, bez vendor lock‑in‑a. To osigurava dugoročnu prilagodljivost.</p>
+
+  <h3>Tablica 1: Justifikacija i kompromisi</h3>
+  <table>
+    <thead><tr><th>Tehnologija</th><th>Prednosti</th><th>Kompromisi</th></tr></thead>
+    <tbody>
+      <tr><td>Vite</td><td>Brzina razvoja, HMR, minimalna konfiguracija</td><td>Manje zreo ekosustav od Webpacka</td></tr>
+      <tr><td>React</td><td>Deklarativan, komponentan, idealan za UI s podacima</td><td>Zahtijeva dodatne biblioteke (Query, Table)</td></tr>
+      <tr><td>shadcn/ui</td><td>Potpuno vlasništvo nad kodom, pristupačnost</td><td>Ručni import/odobravanje promjena</td></tr>
+      <tr><td>ECharts</td><td>Performanse za velike skupove podataka</td><td>Wrapper za React i učenje API‑ja</td></tr>
+    </tbody>
+  </table>
+
+  <h2>2. UI/UX, sustav dizajna i pristupačnost</h2>
+  <p>Paleta (Indigo, Cyan, Green, Amber, Rose, Slate), Inter font, Tailwind + shadcn/ui. Teme preko CSS varijabli. A11y po WCAG 2.1 AA (kontrast ≥ 4.5:1, fokus, alt tekst, tipkovnica).</p>
+
+  <h2>3. Sloj podataka i API</h2>
+  <p>REST je trenutno optimalan. Za budućnost, GraphQL na <code>/graphql</code> reducira over/under‑fetching i round‑tripove.</p>
+
+  <h2>4. Vizualizacija i izvještavanje</h2>
+  <p>ECharts za grafove visokih performansi. SheetJS za CSV/XLSX izvoz. TanStack Table za interaktivne tablice.</p>
+
+  <h2>5. Performanse i skalabilnost</h2>
+  <p>Lazy loading, virtualizacija, memoizacija, background refresh u TanStack Query (staleTime).</p>
+
+  <h2>6. Testiranje i CI/CD</h2>
+  <p>Vitest + RTL (unit/komponentno), Playwright (E2E), Lighthouse ciljevi u CI. Playwright nudi napredne mogućnosti (više preglednika, multi‑context).</p>
+
+  <h2>7. Preporučeni API uzorci</h2>
+  <p>Parametri: <code>from</code>, <code>to</code>, <code>tz</code>, <code>group</code>, <code>filters</code>, plus <code>sort</code>, <code>pagination</code> i opcijski <code>fields</code> za selekciju polja.</p>
+
+  <p class="muted">Ovaj dokument je informativni dodatak Dashboardu i ne mijenja postojeće funkcionalnosti.</p>
+</body>
+</html>

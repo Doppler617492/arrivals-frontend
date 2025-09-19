@@ -195,6 +195,46 @@ export const api = {
       .then((data) => data ?? [])
       .catch(() => []),
 
+  // New: server-filtered containers list
+  fetchContainers: (params?: {
+    q?: string;
+    status?: 'paid' | 'unpaid' | '';
+    statusText?: string; // textual status filter (pending|shipped|arrived|delivered)
+    dateField?: 'eta' | 'etd' | 'delivery';
+    from?: string; // YYYY-MM-DD
+    to?: string;   // YYYY-MM-DD
+    sortBy?: 'created_at' | 'eta' | 'etd' | 'supplier' | 'status' | 'total' | 'balance' | 'id';
+    sortDir?: 'asc' | 'desc';
+    page?: number;
+    perPage?: number;
+    offset?: number;
+    limit?: number;
+  }) => {
+    const p = params || {};
+    const usp = new URLSearchParams();
+    if (p.q) usp.set('q', p.q);
+    if (p.status) usp.set('status', p.status);
+    if (p.dateField) usp.set('date_field', p.dateField);
+    if (p.from) usp.set('from', p.from);
+    if (p.to) usp.set('to', p.to);
+    if (p.statusText) usp.set('status_text', p.statusText);
+    if (p.sortBy) usp.set('sort_by', p.sortBy);
+    if (p.sortDir) usp.set('sort_dir', p.sortDir);
+    if (p.page) usp.set('page', String(p.page));
+    if (p.perPage) usp.set('per_page', String(p.perPage));
+    if (p.offset) usp.set('offset', String(p.offset));
+    if (p.limit) usp.set('limit', String(p.limit));
+    const qs = usp.toString();
+    return http<any>(`/api/containers${qs ? `?${qs}` : ''}`)
+      .then((data) => {
+        // endpoint may return either Array or {items,total}
+        if (Array.isArray(data)) return data as Container[];
+        if (data && Array.isArray(data.items)) return data.items as Container[];
+        return [] as Container[];
+      })
+      .catch(() => [] as Container[]);
+  },
+
   getContainer: (id: ID) =>
     http<Container>(`/api/containers/${id}`)
       .then((data) => ({ ok: true, data }))
@@ -210,10 +250,23 @@ export const api = {
       .then((data) => ({ ok: true, data }))
       .catch((error) => ({ ok: false, error: (error as Error).message })),
 
-  deleteContainer: (id: ID) =>
-    http<ApiResponse<{ deleted_id: ID }>>(`/api/containers/${id}`, { method: "DELETE" })
-      .then((data) => ({ ok: true, data }))
-      .catch((error) => ({ ok: false, error: (error as Error).message })),
+  deleteContainer: async (id: ID) => {
+    try {
+      const data = await http<ApiResponse<{ deleted_id: ID }>>(`/api/containers/${id}`, { method: "DELETE" });
+      return { ok: true, data };
+    } catch (e) {
+      // Fallback: some environments block DELETE or route may be missing; try POST helper
+      try {
+        const data = await http<ApiResponse<{ deleted_id: ID }>>(`/api/containers/delete`, {
+          method: "POST",
+          body: JSON.stringify({ id }),
+        });
+        return { ok: true, data };
+      } catch (err) {
+        return { ok: false, error: (err as Error).message };
+      }
+    }
+  },
 
   // Toggle paid/unpaid
   setContainerPaid: (id: ID, paid: boolean) =>

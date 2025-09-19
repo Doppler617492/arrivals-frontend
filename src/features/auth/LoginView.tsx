@@ -13,6 +13,9 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
   const [showPass, setShowPass] = React.useState<boolean>(false);
   const [remember, setRemember] = React.useState<boolean>(true);
   const emailValid = /.+@.+\..+/.test(email);
+  const [mfaRequired, setMfaRequired] = React.useState(false);
+  const [challengeId, setChallengeId] = React.useState<string>("");
+  const [otp, setOtp] = React.useState<string>("");
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -20,7 +23,7 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
     setErr(null);
     setLoading(true);
     try {
-      const data = await apiPOST<{ access_token: string; user?: User }>("/auth/login", { email, password });
+      const data = await apiPOST<any>("/auth/login", { email, password });
       // Save token to chosen storage (remember -> localStorage, else sessionStorage)
       setToken(data.access_token, remember);
       try {
@@ -32,7 +35,25 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
       const user = data.user ?? (await apiGET<{ user: User }>("/auth/me", true)).user;
       onLoggedIn(user);
     } catch (e: any) {
-      setErr(e?.message || "Greška pri prijavi");
+      // Try to detect MFA requirement
+      const raw = e?.message || "";
+      if (raw.includes('429') || raw.toLowerCase().includes('rate')) {
+        setErr('Previše pokušaja. Pokušajte ponovo kasnije.');
+        setToken(null);
+        setLoading(false);
+        return;
+      }
+      try {
+        const obj = JSON.parse(raw);
+        const payload = typeof obj.message === 'string' ? JSON.parse(obj.message) : obj.message;
+        if (payload && (payload.mfa_required || payload['mfa-required'])) {
+          setMfaRequired(true);
+          setChallengeId(payload.challenge_id || 'demo');
+          setErr(null);
+          return;
+        }
+      } catch {}
+      setErr(raw || "Greška pri prijavi");
       setToken(null);
     } finally {
       setLoading(false);
@@ -40,6 +61,29 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
       setPassword("");
     }
   };
+
+  async function verifyMfa(e: React.FormEvent) {
+    e.preventDefault();
+    if (!otp) { setErr('Unesite MFA kod'); return; }
+    setErr(null);
+    setLoading(true);
+    try {
+      const data = await apiPOST<any>("/auth/mfa/verify", { challenge_id: challengeId, code: otp, remember });
+      setToken(data.access_token, remember);
+      try {
+        const storage: Storage = remember ? localStorage : sessionStorage;
+        storage.setItem("token", data.access_token);
+        storage.setItem("access_token", data.access_token);
+      } catch {}
+      const user = data.user ?? (await apiGET<{ user: User }>("/auth/me", true)).user;
+      onLoggedIn(user);
+    } catch (err:any) {
+      setErr(err?.message || 'MFA verifikacija nije uspjela');
+      setToken(null);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="login-screen" style={styles.fullscreen}>
@@ -154,6 +198,29 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
 
         <div className="divider" />
         <div className="form-grid">
+          {mfaRequired ? (
+            <>
+              <div className="input-wrap">
+                <input
+                  id="login-otp"
+                  className="inputx"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value)}
+                  onKeyDown={(e)=>{ if (e.key === 'Enter') verifyMfa(e as any); }}
+                  placeholder="MFA kod (6 cifara)"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  autoFocus
+                  aria-label="MFA kod"
+                />
+              </div>
+              {err && <div style={styles.error} role="alert" aria-live="polite">{err}</div>}
+              <button disabled={loading || !otp} className="primaryx" onClick={verifyMfa} type="button">{loading ? "Učitavam..." : "Potvrdi kod"}</button>
+              <div className="divider" />
+            </>
+          ) : (
+            <>
           <div className="input-wrap">
             <svg className="input-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path d="M4 4h16v16H4z" strokeWidth="1.5" opacity=".15"></path>
@@ -209,7 +276,7 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
           <button disabled={loading || !emailValid} className="primaryx" type="submit">{loading ? "Učitavam..." : "Uloguj se"}</button>
           <div className="divider" />
           <div style={{ display:'grid', gap:8 }}>
-            <button type="button" className="btn ghost" aria-label="Prijava preko Google" disabled title="Uskoro">
+            <a href="/auth/sso/google" className="btn ghost" aria-label="Prijava preko Google" title="Google prijava">
               <span style={{ display:'inline-flex', alignItems:'center', gap:8 }}>
                 {/* Google G icon */}
                 <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
@@ -220,8 +287,8 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
                 </svg>
                 Nastavi sa Google
               </span>
-            </button>
-            <button type="button" className="btn ghost" aria-label="Prijava preko Microsoft" disabled title="Uskoro">
+            </a>
+            <a href="/auth/sso/microsoft" className="btn ghost" aria-label="Prijava preko Microsoft" title="Microsoft prijava">
               <span style={{ display:'inline-flex', alignItems:'center', gap:8 }}>
                 {/* Microsoft squares icon */}
                 <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
@@ -232,8 +299,10 @@ export default function LoginView({ onLoggedIn }: { onLoggedIn: (u: User) => voi
                 </svg>
                 Nastavi sa Microsoft
               </span>
-            </button>
+            </a>
           </div>
+            </>
+          )}
           <div className="footer-note">© {new Date().getFullYear()} Cungu • Created by Atdhe Tabaku</div>
         </div>
       </form>

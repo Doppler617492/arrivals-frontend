@@ -18,7 +18,7 @@ export default function GeneralSettings() {
     (async () => {
       try {
         setLoading(true);
-        const data = await apiGET("/settings/general");
+        const data = await apiGET<any>("/settings/general");
         if (!isMounted) return;
         setCompanyName(data?.company_name ?? "");
         setLanguage(data?.language ?? "sr");

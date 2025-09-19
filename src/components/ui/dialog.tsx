@@ -1,5 +1,6 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
+import { Modal } from 'antd';
 
 type DialogContextType = {
   open: boolean;
@@ -89,10 +90,11 @@ function Portal({ children }: { children: React.ReactNode }) {
 export function DialogContent({
   className = "",
   children,
+  ...rest
 }: {
   className?: string;
   children: React.ReactNode;
-}) {
+} & React.HTMLAttributes<HTMLDivElement>) {
   const ctx = React.useContext(DialogContext);
   if (!ctx || !ctx.open) return null;
 
@@ -100,18 +102,9 @@ export function DialogContent({
 
   return (
     <Portal>
-      <div
-        className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center"
-        aria-modal="true"
-        role="dialog"
-      >
-        <div className="fixed inset-0 bg-black/40" onClick={close} />
-        <div
-          className={`relative z-[1001] w-full sm:max-w-lg rounded-xl bg-white p-4 shadow-xl ${className}`}
-        >
-          {children}
-        </div>
-      </div>
+      <Modal open={ctx.open} onCancel={close} footer={null} className={className} {...rest}>
+        {children}
+      </Modal>
     </Portal>
   );
 }
@@ -141,9 +134,10 @@ export function DialogClose({
   const onClick = () => ctx.setOpen(false);
 
   if (asChild && React.isValidElement(children)) {
-    return React.cloneElement(children, {
+    const child: any = children;
+    return React.cloneElement(child, {
       onClick: (e: any) => {
-        (children as any).props?.onClick?.(e);
+        child.props?.onClick?.(e);
         onClick();
       },
     });

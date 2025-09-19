@@ -27,7 +27,7 @@ export function exportPDF<T extends Record<string, any>>(rows: T[], filename = "
 
 function escapeCsv(val: any) {
   const s = (val ?? "").toString();
-  return /[",\n]/.test(s) ? \`"\${s.replace(/"/g, '""')}"\` : s;
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);

@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { API_BASE } from "../api/client";
 import { Search, Bell, Plus, ChevronDown, LogOut, User, Shield } from "lucide-react";
 
-const API_BASE =
-  (import.meta as any)?.env?.DEV
-    ? ""
-    : ((import.meta as any)?.env?.VITE_API_BASE?.replace(/\/$/, "") || "");
+// Use centralized API_BASE (always points to backend in dev/prod)
 
 type GlobalHit = {
   type: "arrival" | "container";
@@ -128,10 +126,20 @@ export default function Header() {
     return () => window.removeEventListener("notifications-changed", onChanged);
   }, []);
 
-  // Notifikacije – lokalni store (bez backend poziva)
+  // Notifikacije – backend + fallback na localStorage
   const loadNotifications = async () => {
-    const list = readNotifs();
-    setNotifs(list);
+    try {
+      const res = await fetch(`${API_BASE}/api/notifications`, { credentials: 'include' });
+      if (res.ok) {
+        const arr = await res.json();
+        if (Array.isArray(arr)) {
+          setNotifs(arr.map((n:any)=> ({ id:n.id, text:n.text, unread: n.unread !== false })));
+          return;
+        }
+      }
+    } catch {}
+    // fallback lokalni store
+    setNotifs(readNotifs());
   };
 
   // Akcije

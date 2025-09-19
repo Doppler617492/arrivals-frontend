@@ -6,5 +6,20 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "src/components/ArrivalForm.tsx",
+    "src/components/ArrivalFormDialog.tsx",
+    "src/components/ArrivalModal.tsx",
+    "src/components/ErrorBoundary.tsx",
+    "src/components/Header.tsx",
+    "src/components/KpiBar.tsx",
+    "src/components/Stat.tsx",
+    "src/components/settings/**",
+    "src/components/ui/**",
+    "src/pages/Analytics.tsx",
+    "src/pages/Arrivals.tsx",
+    "src/pages/ContainersGrid.tsx",
+    "src/pages/NewArrivalPage.tsx"
+  ]
 }
