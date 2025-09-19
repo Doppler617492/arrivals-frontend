@@ -1,5 +1,5 @@
 import React from 'react';
-import { apiGET, apiPOST, apiPATCH, apiUPLOAD } from '../api/client';
+import { apiGET, apiPOST, apiPATCH, apiUPLOAD, apiDELETE } from '../api/client';
 import { Table, Tag, Drawer, Tabs, Button, Input, Select, Space, Dropdown, Segmented, DatePicker, Badge } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DownOutlined } from '@ant-design/icons';
