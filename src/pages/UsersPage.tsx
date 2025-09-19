@@ -116,10 +116,7 @@ export default function UsersPage() {
 
   const columns: ColumnsType<User> = [
     {
-      title: 'Korisnik',
-      dataIndex: 'name',
-      key: 'name',
-      hidden: colVis.name === false,
+      title: 'Korisnik', dataIndex: 'name', key: 'name', hidden: colVis.name === false,
       render: (_, r) => (
         <Space>
           <div style={{ width: 28, height: 28, borderRadius: 999, background: '#334155', color:'#fff', display:'grid', placeItems:'center', fontWeight:700 }}>
@@ -127,59 +124,86 @@ export default function UsersPage() {
           </div>
           <div>
             <div style={{ fontWeight: 600 }}>{r.name || '(bez imena)'}</div>
-            <div style={{ fontSize: 12, opacity:.7 }}>{r.email}{r.username?` • ${r.username}`:''}</div>
+            <div style={{ fontSize: 12, color:'#6B7280' }}>{r.email}{r.username?` • ${r.username}`:''}</div>
           </div>
         </Space>
       )
     },
+    { title: 'Email', dataIndex: 'email', key: 'email', width: 220, hidden: colVis.email === false, ellipsis: true, render: (v:string)=> <span style={{ color:'#374151' }}>{v}</span> },
     { title: 'Uloga', dataIndex: 'role', key: 'role', width: 140, hidden: colVis.role === false,
-      render: (v: Role) => <Tag color={roleColors[v] || 'default'}>{v}</Tag>
+      render: (v: Role) => <Tag style={{ borderRadius:999, padding:'0 8px', fontWeight:600 }} color={v==='admin'?'geekblue':v==='manager'?'green':v==='viewer'?'default':'blue'}>{v}</Tag>
     },
-    { title: 'Status', dataIndex: 'status', key: 'status', width: 120, hidden: colVis.status === false,
-      render: (s: Status) => <Tag color={s==='active'?'green':s==='invited'?'blue':s==='suspended'?'volcano':'red'}>{s}</Tag>
+    { title: 'Status', dataIndex: 'status', key: 'status', width: 140, hidden: colVis.status === false,
+      render: (s: Status) => {
+        const color = s==='active'?'#16A34A': s==='suspended'?'#6B7280': s==='locked'?'#F59E0B': '#3B82F6';
+        const bg = s==='active'?'#DCFCE7': s==='suspended'?'#F3F4F6': s==='locked'?'#FEF3C7': '#DBEAFE';
+        return <span style={{ background:bg, color, borderRadius:999, padding:'2px 10px', fontSize:12, fontWeight:600 }}>{s}</span>;
+      }
+    },
+    { title: 'Pi', dataIndex: 'kpi_7d', key: 'kpi', width: 80, align: 'center', hidden: colVis.kpi === false, render: (k:any)=> <span style={{ fontSize:12, fontWeight:600 }}>{k?.processed ?? 0}</span> },
+    { title: 'Last Activity', dataIndex: 'last_activity_at', key: 'last', width: 220, hidden: colVis.last_activity_at === false,
+      render: (v?: string) => {
+        if (!v) return null;
+        const days = Math.max(0, Math.floor((Date.now() - new Date(v).getTime()) / (1000*60*60*24)));
+        const good = days <= 7; const warn = days > 7 && days <= 30; const bad = days > 30;
+        const color = good? '#16A34A' : warn? '#F59E0B' : '#EF4444';
+        const pct = Math.min(100, Math.round((30 - Math.min(days,30)) / 30 * 100));
+        return (
+          <div title={new Date(v).toISOString()} style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <div style={{ flex:1, height:10, background:'#E5E7EB', borderRadius:999, overflow:'hidden' }}>
+              <div style={{ width: `${pct}%`, height:'100%', background: color }} />
+            </div>
+            <span style={{ fontSize:12, color:'#6B7280' }}>{days}d</span>
+          </div>
+        );
+      }
     },
     { title: 'Zadaci danas', dataIndex: 'tasks_today', key: 'tasks_today', width: 120, align: 'right', hidden: colVis.tasks_today === false },
-    { title: 'KPI 7d', dataIndex: 'kpi_7d', key: 'kpi_7d', width: 180, hidden: colVis.kpi === false,
+    { title: 'KPI 7d', dataIndex: 'kpi_7d', key: 'kpi_7d', width: 180, hidden: colVis.kpi2 === false,
       render: (k: any) => (
         <div style={{ fontSize:12 }}>
           <div>Obrađeno: <b>{k?.processed ?? 0}</b></div>
         </div>
       )
     },
-    { title: 'Posljednja aktivnost', dataIndex: 'last_activity_at', key: 'last_activity_at', width: 180, hidden: colVis.last_activity_at === false,
-      render: (v?: string) => v ? new Date(v).toLocaleString() : ''
-    },
-    { title: 'Kreiran', dataIndex: 'created_at', key: 'created_at', width: 180, hidden: colVis.created_at === false,
-      render: (v: string) => new Date(v).toLocaleDateString()
-    },
     { title: '', key: 'actions', fixed: 'right', width: 60,
       render: (_, r) => {
         const items = [
-          { key: 'edit', label: 'Uredi' },
-          { key: 'reset', label: 'Reset lozinke' },
-          { key: 'suspend', label: r.status==='active'?'Suspenduj':'Reaktiviraj' },
-          { key: 'revoke', label: 'Revoke sessions' },
+          { key: 'view', icon: <EyeOutlined />, label: 'View' },
+          { key: 'edit', icon: <EditOutlined />, label: 'Edit' },
+          { key: 'reset', icon: <RedoOutlined />, label: 'Reset Password' },
+          { key: 'toggle', icon: r.status==='active'? <StopOutlined /> : <UnlockOutlined />, label: r.status==='active'? 'Deactivate' : 'Activate' },
+          { key: 'lock', icon: <LockOutlined />, label: 'Lock Account' },
+          { key: 'revoke', icon: <DeleteOutlined />, label: 'Revoke sessions' },
+          { type: 'divider' as any },
+          { key: 'delete', icon: <DeleteOutlined />, danger: true as any, label: 'Delete' },
         ];
         return (
           <Dropdown
             menu={{ items, onClick: async ({ key }) => {
-              if (key==='edit') setDrawer({ open:true, user:r });
+              if (key==='view' || key==='edit') setDrawer({ open:true, user:r });
               if (key==='reset') {
                 const resp = await apiPOST<any>(`/api/users/${r.id}/password/reset`, { generate_temp: true }, { auth: true });
                 alert(`Privremena lozinka: ${resp?.temp_password || '(nije generisana)'}`);
               }
-              if (key==='suspend') {
+              if (key==='toggle') {
                 const status: Status = r.status==='active' ? 'suspended' : 'active';
                 await apiPOST(`/api/users/bulk/status`, { ids: [r.id], status }, { auth: true });
                 fetchList();
               }
+              if (key==='lock') { await apiPOST(`/api/users/${r.id}/lock`, {}, { auth: true }); fetchList(); }
               if (key==='revoke') {
                 await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${r.id}/sessions`, { method:'DELETE', headers:{ Authorization:`Bearer ${localStorage.getItem('token')}` } });
+              }
+              if (key==='delete') {
+                if (!confirm('Soft delete this user?')) return;
+                await apiDELETE(`/api/users/${r.id}`, true);
+                fetchList();
               }
             } }}
             trigger={["click"]}
           >
-            <Button type="text" size="small">⋯</Button>
+            <Button type="text" size="small" icon={<MoreOutlined />} />
           </Dropdown>
         );
       }
