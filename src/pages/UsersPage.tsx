@@ -390,7 +390,7 @@ export default function UsersPage() {
   );
 }
 
-function ProfileTab(props: ProfileTabProps) {
+function ProfileTab(props: any) {
   const { user, onSaved } = props;
   const [form, setForm] = React.useState({ name: user.name || '', phone: user.phone || '', type: user.type || 'internal', status: user.status, role: user.role });
   async function save() {
