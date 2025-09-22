@@ -361,7 +361,22 @@ export default function ArrivalsCards() {
     form.setFieldsValue(values);
     setOpen(true);
   }
-  async function onDelete(r: Arrival) { try { await apiDELETE(`/api/arrivals/${r.id}`, true); message.success('Obrisano'); qc.invalidateQueries({ queryKey: ['arrivals'] }); } catch (e: any) { message.error(e?.message || 'Brisanje nije uspjelo'); } }
+  async function onDelete(r: Arrival) {
+    // Optimistic remove from local state
+    setRows(prev => prev.filter(x => x.id !== r.id));
+    // Update React Query cache immediately
+    try {
+      qc.setQueriesData({ queryKey: ['arrivals'] }, (old: any) => Array.isArray(old) ? old.filter((x: any) => Number(x.id) !== Number(r.id)) : old);
+    } catch {}
+    try {
+      await apiDELETE(`/api/arrivals/${r.id}`, true);
+      message.success('Obrisano');
+    } catch (e: any) {
+      message.error(e?.message || 'Brisanje nije uspjelo');
+      // Revalidate to restore if backend failed
+      qc.invalidateQueries({ queryKey: ['arrivals'] });
+    }
+  }
 
   async function onSubmit() {
     try {

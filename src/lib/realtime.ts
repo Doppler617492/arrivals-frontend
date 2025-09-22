@@ -167,11 +167,28 @@ export function wireRealtimeToQueryClient(qc: QueryClient) {
       // Update item-level cache if present
       qc.setQueryData(['arrivals', idNum], (old: any) => old ? { ...old, ...(evt.changes || {}), ...(evt.data || {}) } : old);
     }
-    if ((evt.type === 'arrivals.created' || evt.type === 'arrivals.deleted') && evt.resource === 'arrivals') {
-      qc.invalidateQueries({ queryKey: ['arrivals'] }).catch(() => {});
-      // Invalidate arrivals analytics caches (any filter combos)
+    if (evt.type === 'arrivals.deleted' && evt.id) {
+      const idNum = Number(evt.id);
+      // Remove from cached lists without refetch
+      qc.setQueriesData({ queryKey: ['arrivals'] }, (oldData: any) => {
+        if (!Array.isArray(oldData)) return oldData;
+        const next = oldData.filter((r: any) => Number(r.id) !== idNum);
+        return next;
+      });
+      // Remove item-level cache
+      qc.removeQueries({ queryKey: ['arrivals', idNum], exact: true }).catch(() => {});
+      // Optionally invalidate analytics
       qc.invalidateQueries({ queryKey: ['analytics','arrivals'] }).catch(() => {});
-      qc.invalidateQueries({ queryKey: ['analytics'] }).catch(() => {});
+    }
+    if (evt.type === 'arrivals.created' && evt.data) {
+      const row = evt.data;
+      qc.setQueriesData({ queryKey: ['arrivals'] }, (oldData: any) => {
+        if (!Array.isArray(oldData)) return oldData;
+        // Prepend if not already present
+        if (oldData.some((r: any) => Number(r.id) === Number(row.id))) return oldData;
+        return [row, ...oldData];
+      });
+      qc.invalidateQueries({ queryKey: ['analytics','arrivals'] }).catch(() => {});
     }
   });
 }
