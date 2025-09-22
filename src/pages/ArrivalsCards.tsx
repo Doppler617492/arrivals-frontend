@@ -2,7 +2,7 @@ import React from 'react';
 import { Card, Row, Col, Space, Tag, Button, Input, Select, DatePicker, Modal, Form, message, Empty, InputNumber, Popconfirm, Popover, List } from 'antd';
 import dayjs from 'dayjs';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CarOutlined, CalendarOutlined, EnvironmentOutlined, UserOutlined, IdcardOutlined, FileTextOutlined, DollarCircleOutlined, AuditOutlined, PaperClipOutlined } from '@ant-design/icons';
+import { CarOutlined, CalendarOutlined, EnvironmentOutlined, UserOutlined, IdcardOutlined, FileTextOutlined, DollarCircleOutlined, AuditOutlined, PaperClipOutlined, SearchOutlined, TagsOutlined } from '@ant-design/icons';
 import { apiGET, apiPOST, apiPATCH, apiDELETE, qs, API_BASE, getToken } from '../api/client';
 import { exportCSV as exportCSVUtil } from '../utils/exports';
 
@@ -24,6 +24,7 @@ type Arrival = {
   transport_type?: string;
   note?: string;
   responsible?: string;
+  category?: string;
 };
 
 // Options (replicate prior dataset)
@@ -31,6 +32,26 @@ const RESPONSIBLE_OPTIONS = ["Ludvig", "Gazi", "Gezim", "Armir", "Rrezart", "Bek
 const LOCATION_OPTIONS = [
   "Veleprodajni Magacin","Carinsko Skladiste","Pg Centar","Pg","Bar","Bar Centar",
   "Budva","Kotor Centar","Herceg Novi","Herceg Novi Centar","Niksic","Bijelo polje","Ulcinj Centar","Horeca"
+];
+
+// Kategorije (bezbjedno za frontend; backend fallback u localStorage)
+const CATEGORY_OPTIONS = [
+  "Tekstil",
+  "Dekoracije",
+  "Horec",
+  "Pokucstvo",
+  "Sanitarije",
+  "Autoprogram",
+  "Elektirca I rasvijeta",
+  "Mali kucni aparati",
+  "Igracke",
+  "Basteski program",
+  "Novogodisnji",
+  "Sport",
+  "Kozmetik",
+  "Namjestaj",
+  "Nautic",
+  "Travel",
 ];
 
 const statusLabel: Record<'not_shipped'|'shipped'|'arrived', string> = {
@@ -45,12 +66,20 @@ function normalizeStatus(s: any): 'not_shipped' | 'shipped' | 'arrived' {
   return 'arrived';
 }
 
+function normalizeCategory(c?: string): string {
+  const raw = String(c || '').trim();
+  if (!raw) return '';
+  if (raw === 'Mali kuci aparati') return 'Mali kucni aparati';
+  return raw;
+}
+
 export default function ArrivalsCards() {
   const [rows, setRows] = React.useState<Arrival[]>([]);
   const [q, setQ] = React.useState('');
   const [status, setStatus] = React.useState<string>('');
   const [locationF, setLocationF] = React.useState<string>('');
-  const [responsibleF, setResponsibleF] = React.useState<string>('');
+  const [responsibleF, setResponsibleF] = React.useState<string[]>([]);
+  const [categoryF, setCategoryF] = React.useState<string>('');
   const [dateFrom, setDateFrom] = React.useState<string>('');
   const [dateTo, setDateTo] = React.useState<string>('');
   const [open, setOpen] = React.useState(false);
@@ -92,14 +121,42 @@ export default function ArrivalsCards() {
     return () => window.removeEventListener('hashchange', focusFromHash);
   }, []);
   const { data } = useQuery({
-    queryKey: ['arrivals', { q, status, locationF, responsibleF, dateFrom, dateTo }],
+    queryKey: ['arrivals', { q, status, locationF, responsibleF, categoryF, dateFrom, dateTo }],
     queryFn: async () => {
       // Pass filters for server-side support (backend may ignore - we still map client-side)
-      const query = qs({ q, status, location: locationF, responsible: responsibleF, from: dateFrom, to: dateTo });
+      const query = qs({
+        q,
+        status,
+        location: locationF,
+        responsible: Array.isArray(responsibleF) && responsibleF.length ? responsibleF.join(',') : '',
+        category: categoryF,
+        from: dateFrom,
+        to: dateTo
+      });
       const url = query ? `/api/arrivals?${query}` : '/api/arrivals';
       const arr = await apiGET<any[]>(url, true).catch(() => []);
       const list = Array.isArray(arr) ? arr : [];
-      return list.map((a: any) => ({ ...a, id: Number(a.id), status: normalizeStatus(a.status) })) as Arrival[];
+      let localMap: Record<string, string> = {};
+      try { localMap = JSON.parse(localStorage.getItem('arrivals_category_map') || '{}') || {}; } catch {}
+      const out = list.map((a: any) => {
+        const id = Number(a.id);
+        const fromLocal = localMap[String(id)] || '';
+        const cat = normalizeCategory(a.category || fromLocal || '');
+        // Migrate typo in local storage if present
+        if (fromLocal && fromLocal !== cat) {
+          try {
+            localMap[String(id)] = cat;
+            localStorage.setItem('arrivals_category_map', JSON.stringify(localMap));
+          } catch {}
+        }
+        return {
+          ...a,
+          id,
+          status: normalizeStatus(a.status),
+          category: cat,
+        } as Arrival;
+      });
+      return out as Arrival[];
     },
     refetchOnMount: false,
     staleTime: 180_000,
@@ -123,13 +180,17 @@ export default function ArrivalsCards() {
     return rows.filter(r => {
       if (status && normalizeStatus(r.status) !== status) return false as any;
       if (locationF && (r.location || '').toLowerCase() !== locationF.toLowerCase()) return false as any;
-      if (responsibleF && (r.responsible || '').toLowerCase() !== responsibleF.toLowerCase()) return false as any;
+      if (Array.isArray(responsibleF) && responsibleF.length) {
+        const cur = (r.responsible || '').toLowerCase();
+        if (!responsibleF.some(v => v.toLowerCase() === cur)) return false as any;
+      }
+      if (categoryF && (r.category || '').toLowerCase() !== categoryF.toLowerCase()) return false as any;
       if (!inRange(r.eta)) return false as any;
       if (!qq) return true;
-      const hay = [r.id, r.supplier, r.carrier, r.plate, r.driver, r.location].filter(Boolean).join(' ').toLowerCase();
+      const hay = [r.id, r.supplier, r.carrier, r.plate, r.driver, r.location, r.category].filter(Boolean).join(' ').toLowerCase();
       return hay.includes(qq);
     });
-  }, [rows, q, status, locationF, responsibleF, dateFrom, dateTo]);
+  }, [rows, q, status, locationF, responsibleF, categoryF, dateFrom, dateTo]);
 
   // --- Status ops and DnD helpers (for kanban columns) ---
   async function updateStatus(id: number, next: 'not_shipped'|'shipped'|'arrived') {
@@ -191,6 +252,7 @@ export default function ArrivalsCards() {
       status: statusLabel[normalizeStatus(r.status)],
       location: r.location || '',
       responsible: r.responsible || '',
+      category: r.category || '',
       eta: r.eta ? new Date(r.eta).toLocaleString() : '',
       pickup: r.pickup_date ? new Date(r.pickup_date).toLocaleString() : '',
       type: r.type || r.transport_type || '',
@@ -213,6 +275,7 @@ export default function ArrivalsCards() {
         Status: statusLabel[normalizeStatus(r.status)],
         Lokacija: r.location || '',
         Odgovorna: r.responsible || '',
+        Kategorija: r.category || '',
         ETA: r.eta ? new Date(r.eta).toLocaleString() : '',
         Pickup: r.pickup_date ? new Date(r.pickup_date).toLocaleString() : '',
         Tip: r.type || r.transport_type || '',
@@ -239,7 +302,7 @@ export default function ArrivalsCards() {
     if (!name) return;
     const next = {
       ...views,
-      [name]: { q, status, locationF, responsibleF, dateFrom, dateTo },
+      [name]: { q, status, locationF, responsibleF, categoryF, dateFrom, dateTo },
     };
     setViews(next);
     setSelectedView(name);
@@ -262,9 +325,27 @@ export default function ArrivalsCards() {
     setQ(v.q || '');
     setStatus(v.status || '');
     setLocationF(v.locationF || '');
-    setResponsibleF(v.responsibleF || '');
+    setResponsibleF(Array.isArray(v.responsibleF) ? v.responsibleF : (v.responsibleF ? [v.responsibleF] : []));
+    setCategoryF(v.categoryF || '');
     setDateFrom(v.dateFrom || '');
     setDateTo(v.dateTo || '');
+  }
+
+  // Category helpers with local fallback
+  function setLocalCategory(id: number, category: string) {
+    try {
+      const raw = localStorage.getItem('arrivals_category_map');
+      const map = raw ? JSON.parse(raw) : {};
+      if (category) map[String(id)] = category; else delete map[String(id)];
+      localStorage.setItem('arrivals_category_map', JSON.stringify(map));
+    } catch {}
+  }
+  async function updateCategory(id: number, category: string) {
+    setRows(prev => prev.map(r => r.id === id ? { ...r, category } : r));
+    setLocalCategory(id, category);
+    try {
+      await apiPATCH(`/api/arrivals/${id}`, { category }, true);
+    } catch {}
   }
 
   function onAdd() {
@@ -294,8 +375,19 @@ export default function ArrivalsCards() {
         freight_cost: typeof v.freight_cost === 'number' ? v.freight_cost : undefined,
         goods_cost: typeof v.goods_cost === 'number' ? v.goods_cost : undefined,
       };
-      if (editing) { await apiPATCH(`/api/arrivals/${editing.id}`, payload, true); message.success('Sačuvano'); }
-      else { await apiPOST('/api/arrivals', payload, { auth: true }); message.success('Kreirano'); }
+      if (editing) {
+        const resp = await apiPATCH<any>(`/api/arrivals/${editing.id}`, payload, true);
+        // ensure local category cache aligns immediately
+        const cat = String(payload.category || resp?.category || '').trim();
+        if (cat) setLocalCategory(Number(editing.id), cat);
+        message.success('Sačuvano');
+      } else {
+        const created = await apiPOST<any>('/api/arrivals', payload, { auth: true });
+        const newId = Number(created?.id);
+        const cat = String(payload.category || created?.category || '').trim();
+        if (Number.isFinite(newId) && cat) setLocalCategory(newId, cat);
+        message.success('Kreirano');
+      }
       setOpen(false); qc.invalidateQueries({ queryKey: ['arrivals'] });
     } catch {}
   }
@@ -304,8 +396,10 @@ export default function ArrivalsCards() {
   async function listFiles(arrivalId: number) {
     setFilesLoading(true);
     try {
+      const token = getToken();
+      if (!token) { alert('Potrebna je prijava'); setFilesList([]); return; }
       const res = await fetch(`${API_BASE}/api/arrivals/${arrivalId}/files`, {
-        headers: { Accept: 'application/json', Authorization: `Bearer ${getToken() || ''}` },
+        headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       const items = (Array.isArray(data) ? data : []).map((it:any) => ({
@@ -336,9 +430,11 @@ export default function ArrivalsCards() {
     } else {
       Array.from(files).forEach(f => fd.append('files', f));
     }
+    const token = getToken();
+    if (!token) { alert('Potrebna je prijava'); return; }
     await fetch(`${API_BASE}/api/arrivals/${arrivalId}/files`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${getToken() || ''}` }, // bez Content-Type; browser dodaje boundary
+      headers: { Authorization: `Bearer ${token}` }, // bez Content-Type; browser dodaje boundary
       body: fd,
     });
     await listFiles(arrivalId);
@@ -346,9 +442,11 @@ export default function ArrivalsCards() {
     setRows(prev => prev.map(r => r.id === arrivalId ? { ...r, files_count: (r as any).files_count ? (r as any).files_count + (files?.length || 0) : (files?.length || 0) } : r));
   }
   async function deleteDoc(arrivalId: number, fileId: number) {
+    const token = getToken();
+    if (!token) { alert('Potrebna je prijava'); return; }
     await fetch(`${API_BASE}/api/arrivals/${arrivalId}/files/${fileId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${getToken() || ''}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
     await listFiles(arrivalId);
     setRows(prev => prev.map(r => r.id === arrivalId ? { ...r, files_count: Math.max(0, ((r as any).files_count || 1) - 1) } : r));
@@ -373,7 +471,8 @@ export default function ArrivalsCards() {
         setPreviewHtml("");
       } else {
         // Try to render CSV/XLSX to HTML table via SheetJS
-        const res = await fetch(fileUrl, { headers: { Authorization: `Bearer ${getToken() || ''}` } });
+      const token = getToken();
+      const res = await fetch(fileUrl, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
         const ct = res.headers.get('content-type') || '';
         if (ct.includes('text/csv') || /\.csv$/i.test(f.filename)) {
           const text = await res.text();
@@ -421,27 +520,93 @@ export default function ArrivalsCards() {
           <Button type="primary" onClick={onAdd}>+ Novi dolazak</Button>
         </Space>
       }>
-        <Space wrap>
-          <Input.Search placeholder="Pretraga…" allowClear value={searchValue} onChange={(e)=> setSearchValue(e.target.value)} style={{ width: 260 }} />
-          <Select value={status} onChange={setStatus} placeholder="Status" style={{ width: 160 }} allowClear options={[{ value: 'not_shipped', label: 'Najavljeno' },{ value: 'shipped', label: 'U transportu' },{ value: 'arrived', label: 'Stiglo' }]} />
-          <Select
-            value={locationF}
-            onChange={setLocationF}
-            placeholder="Lokacija"
-            allowClear
-            style={{ width: 200 }}
-            options={LOCATION_OPTIONS.map(v=> ({ value: v, label: v }))}
-          />
-          <Select
-            value={responsibleF}
-            onChange={setResponsibleF}
-            placeholder="Odgovorna osoba"
-            allowClear
-            style={{ width: 200 }}
-            options={RESPONSIBLE_OPTIONS.map(v=> ({ value: v, label: v }))}
-          />
+        {/* Redesigned filter bar: 4 clear columns with icons and badge styles */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-[hsl(var(--secondary))] border border-[hsl(var(--border))] rounded-xl p-3 shadow-sm">
+          {/* 1) Search */}
+          <div>
+            <div className="text-xs font-medium text-slate-500 mb-1">Pretraga</div>
+            <Input.Search
+              placeholder="Pretraga dolazaka…"
+              allowClear
+              value={searchValue}
+              onChange={(e)=> setSearchValue(e.target.value)}
+              prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+            />
+          </div>
+          {/* 2) Status with colored badges */}
+          <div>
+            <div className="text-xs font-medium text-slate-500 mb-1">Statusi</div>
+            <Select
+              value={status}
+              onChange={setStatus}
+              placeholder="Status"
+              allowClear
+              style={{ width: '100%' }}
+              optionLabelProp="label"
+              options={[
+                { value: 'not_shipped', label: (<Tag color="gold">Najavljeno</Tag>) },
+                { value: 'shipped',     label: (<Tag color="red">U transportu</Tag>) },
+                { value: 'arrived',     label: (<Tag color="green">Stiglo</Tag>) },
+              ]}
+            />
+          </div>
+          {/* 3) Location with icon in label */}
+          <div>
+            <div className="text-xs font-medium text-slate-500 mb-1">Lokacije</div>
+            <Select
+              value={locationF}
+              onChange={setLocationF}
+              placeholder="Lokacija"
+              allowClear
+              style={{ width: '100%' }}
+              optionLabelProp="label"
+              options={LOCATION_OPTIONS.map(v=> ({
+                value: v,
+                label: (
+                  <span style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+                    <EnvironmentOutlined style={{ color:'#94a3b8' }} />
+                    {v}
+                  </span>
+                )
+              }))}
+            />
+          </div>
+          {/* 4) Responsible with avatar/icon in label */}
+          <div>
+            <div className="text-xs font-medium text-slate-500 mb-1">Odgovorne osobe</div>
+            <Select
+              mode="multiple"
+              value={responsibleF}
+              onChange={setResponsibleF}
+              placeholder="Odgovorne osobe"
+              allowClear
+              style={{ width: '100%' }}
+              optionLabelProp="label"
+              options={RESPONSIBLE_OPTIONS.map(v=> ({
+                value: v,
+                label: (
+                  <span style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+                    <UserOutlined style={{ color:'#94a3b8' }} />
+                    {v}
+                  </span>
+                )
+              }))}
+            />
+          </div>
+        </div>
+
+        {/* Optional: date range under the main bar, keeping existing behavior */}
+        <Space style={{ marginTop: 8 }} wrap>
           <DatePicker placeholder="Od" value={dateFrom? dayjs(dateFrom) : null} onChange={(d)=> setDateFrom(d? d.format('YYYY-MM-DD') : '')} />
           <DatePicker placeholder="Do" value={dateTo? dayjs(dateTo) : null} onChange={(d)=> setDateTo(d? d.format('YYYY-MM-DD') : '')} />
+          <Select
+            value={categoryF || undefined}
+            onChange={(v)=> setCategoryF(v || '')}
+            placeholder="Kategorija"
+            allowClear
+            style={{ minWidth: 200 }}
+            options={CATEGORY_OPTIONS.map(v=> ({ value: v, label: v }))}
+          />
         </Space>
       </Card>
 
@@ -476,6 +641,7 @@ export default function ArrivalsCards() {
                           <Tag icon={<PaperClipOutlined />} style={{ cursor:'pointer' }} onClick={(e)=> { e.stopPropagation(); openDocs(r.id); }}>
                             {(r as any).files_count ?? 0}
                           </Tag>
+                          
                         </Space>}
                         extra={
                           <Select
@@ -502,6 +668,9 @@ export default function ArrivalsCards() {
                           <div style={{ display:'flex', justifyContent:'space-between', gap:8 }}>
                             <div><EnvironmentOutlined style={{ marginRight: 6 }} /><strong>Lokacija:</strong> {r.location || '-'}</div>
                             <div><UserOutlined style={{ marginRight: 6 }} /><strong>Odgovorna:</strong> {r.responsible || '-'}</div>
+                          </div>
+                          <div style={{ display:'flex', justifyContent:'space-between', gap:8 }}>
+                            <div><TagsOutlined style={{ marginRight: 6 }} /><strong>Kategorija:</strong> {r.category ? <Tag color="#0ea5e9">{r.category}</Tag> : '-'}</div>
                           </div>
                           <div style={{ display:'flex', justifyContent:'space-between', gap:8 }}>
                             <div><CarOutlined style={{ marginRight: 6 }} /><strong>Prevoznik:</strong> {r.carrier || '-'}</div>
@@ -555,6 +724,9 @@ export default function ArrivalsCards() {
           </Form.Item>
           <Form.Item name="eta" label="ETA">
             <DatePicker style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="category" label="Kategorija">
+            <Select allowClear showSearch options={CATEGORY_OPTIONS.map(v=> ({ value: v, label: v }))} />
           </Form.Item>
           <Form.Item name="location" label="Lokacija">
             <Select allowClear showSearch options={LOCATION_OPTIONS.map(v=> ({ value: v, label: v }))} />
