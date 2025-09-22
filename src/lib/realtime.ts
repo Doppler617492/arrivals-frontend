@@ -24,12 +24,14 @@ function deduceWsUrl(): string | null {
   const apiBase = ((import.meta as any).env?.VITE_API_BASE || "").toString().replace(/\/$/, "");
   if (!apiBase) {
     // default dev base
-    return `ws://localhost:8081/ws?v=1&topics=arrivals,containers`;
+    const since = (typeof localStorage !== 'undefined' && localStorage.getItem('notifications_last_id')) || '0';
+    return `ws://localhost:8081/ws?v=1&topics=arrivals,containers,notifications&since_id=${encodeURIComponent(String(since||'0'))}`;
   }
   try {
     const u = new URL(apiBase);
     const wsProto = u.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${wsProto}//${u.host}/ws?v=1&topics=arrivals,containers`;
+    const since = (typeof localStorage !== 'undefined' && localStorage.getItem('notifications_last_id')) || '0';
+    return `${wsProto}//${u.host}/ws?v=1&topics=arrivals,containers,notifications&since_id=${encodeURIComponent(String(since||'0'))}`;
   } catch {
     return null;
   }

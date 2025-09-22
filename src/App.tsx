@@ -10,12 +10,15 @@ import ContainersPage from "./pages/Containers";
 import { apiGET, apiPOST, getToken, setToken, API_BASE } from "./api/client";
 import type { User } from "./types";
 import { useAuthStore } from "./store";
-import { Layout, Menu, Button, Input, Dropdown, Avatar, Badge, Drawer, Radio, Switch, Space } from 'antd';
-import { AppstoreOutlined, UserOutlined, ContainerOutlined, SettingOutlined, MenuFoldOutlined, MenuUnfoldOutlined, BellOutlined, SearchOutlined, BulbOutlined } from '@ant-design/icons';
+import { useNotificationsStore } from "./store/notifications";
+import { Layout, Menu, Button, Input, Dropdown, Avatar, Badge, Drawer, Radio, Switch, Space, App as AntApp } from 'antd';
+import { AppstoreOutlined, UserOutlined, ContainerOutlined, SettingOutlined, MenuFoldOutlined, MenuUnfoldOutlined, BellOutlined, SearchOutlined, BulbOutlined, CarOutlined, MoreOutlined, DeleteOutlined, EyeOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useUIStore } from "./store";
 import MuseDashboard from "./pages/MuseDashboard";
 import AnalyticsArrivals from "./pages/AnalyticsArrivals";
 import AnalyticsContainers from "./pages/AnalyticsContainers";
+import VozilaPage from "./pages/Vozila";
+import AuthDebug from "./pages/AuthDebug";
 import SettingsPage from "./pages/Settings";
 import "./index.css";
 import { initRealtime, realtime } from './lib/realtime';
@@ -23,11 +26,16 @@ import { initRealtime, realtime } from './lib/realtime';
 // Classic Shell removed; always enterprise layout
 
 function EnterpriseShell() {
+  const { modal } = AntApp.useApp();
   React.useEffect(() => { initRealtime(); }, []);
   const [notifOpen, setNotifOpen] = React.useState(false);
   const notifRef = React.useRef<HTMLDivElement | null>(null);
-  const [notifs, setNotifs] = React.useState<Array<{ id:number; text:string; read?:boolean; created_at?: string; navigate_url?: string; entity_type?: string; entity_id?: number }>>([]);
-  const [unreadCount, setUnreadCount] = React.useState<number>(0);
+  const notifs = useNotificationsStore((s)=> s.items);
+  const setNotifList = useNotificationsStore((s)=> s.setList);
+  const addNotif = useNotificationsStore((s)=> s.add);
+  const markReadStore = useNotificationsStore((s)=> s.markRead);
+  const unreadCount = useNotificationsStore((s)=> s.unreadCount);
+  const setUnreadCount = useNotificationsStore((s)=> s.setUnreadCount);
   const [notifUnreadOnly, setNotifUnreadOnly] = React.useState<boolean>(false);
   const [notifLimit, setNotifLimit] = React.useState<number>(20);
   // Load unread count on mount
@@ -44,8 +52,7 @@ function EnterpriseShell() {
     const off = realtime.on((evt) => {
       if (evt.type === 'notifications.created' && evt.data) {
         const d: any = evt.data;
-        setUnreadCount((c) => c + 1);
-        setNotifs((prev) => [{ id: Number(d.id), text: String(d.text || ''), read: false, created_at: d.created_at, navigate_url: d.navigate_url, entity_type: d.entity_type, entity_id: d.entity_id }, ...prev].slice(0, 20));
+        addNotif({ id: Number(d.id), text: String(d.text || ''), read: Boolean(d.read), created_at: d.created_at, navigate_url: d.navigate_url, entity_type: d.entity_type, entity_id: d.entity_id, type: d.type, event: d.event });
       }
       if (evt.type === 'focus-arrival' && evt.id) {
         // Navigate to arrivals and focus by hash
@@ -58,10 +65,13 @@ function EnterpriseShell() {
     return () => { try { off?.(); } catch {} };
   }, []);
 
-  // Close dropdown on outside click and ESC
+  // Close legacy dropdown on outside click and ESC (ignore Drawer clicks)
   React.useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
       if (!notifOpen) return;
+      // If click is inside AntD Drawer, do not close
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest && target.closest('.ant-drawer')) return;
       const el = notifRef.current;
       if (!el) return;
       if (!el.contains(e.target as Node)) setNotifOpen(false);
@@ -86,15 +96,14 @@ function EnterpriseShell() {
         if (notifUnreadOnly) qs.set('unread', '1');
         if (notifLimit) qs.set('limit', String(notifLimit));
         const list = await apiGET<any[]>(`/api/notifications${qs.toString()?`?${qs.toString()}`:''}`, true);
-        setNotifs((list || []).map((n:any) => ({ id: Number(n.id), text: String(n.text || ''), read: Boolean(n.read), created_at: n.created_at, navigate_url: n.navigate_url, entity_type: n.entity_type, entity_id: n.entity_id })));
+        setNotifList((list || []).map((n:any) => ({ id: Number(n.id), text: String(n.text || ''), read: Boolean(n.read), created_at: n.created_at, navigate_url: n.navigate_url, entity_type: n.entity_type, entity_id: n.entity_id, type: n.type, event: n.event })));
       } catch {}
     }
   }
 
   async function openNotification(n: { id:number; navigate_url?: string; entity_type?: string; entity_id?: number }) {
     try { await apiPOST(`/api/notifications/${n.id}/open`, {}, { auth: true }); } catch {}
-    setNotifs(prev => prev.map(it => it.id === n.id ? { ...it, read: true } : it));
-    setUnreadCount(c => Math.max(0, c - 1));
+    markReadStore(n.id, true);
     if (n.navigate_url) window.location.href = n.navigate_url;
     else if (n.entity_type === 'arrival' && n.entity_id) window.location.href = `/arrivals#${n.entity_id}`;
   }
@@ -103,21 +112,19 @@ function EnterpriseShell() {
     const ids = notifs.filter(n => !n.read).map(n => n.id);
     if (!ids.length) { setNotifOpen(false); return; }
     try { await apiPOST(`/api/notifications/ack`, { ids, read: true }, { auth: true }); } catch {}
-    setNotifs(prev => prev.map(n => ({ ...n, read: true })));
-    setUnreadCount(0);
+    try { setNotifList(notifs.map(n => ({ ...n, read: true }))); } catch {}
     setNotifOpen(false);
   }
 
   async function deleteNotification(e: React.MouseEvent, n: { id:number; read?: boolean }) {
     e.stopPropagation();
     try { await fetch(`${API_BASE}/api/notifications/${n.id}`, { method: 'DELETE', headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${getToken() || ''}` }, credentials: 'include' as RequestCredentials }); } catch {}
-    setNotifs(prev => prev.filter(it => it.id !== n.id));
-    if (!n.read) setUnreadCount(c => Math.max(0, c - 1));
+    try { setNotifList(notifs.filter(it => it.id !== n.id)); } catch {}
   }
 
   function fmtTime(s?: string) {
     if (!s) return '';
-    try { return new Date(s).toLocaleString(); } catch { return s; }
+    try { return new Date(s).toLocaleString('sr-RS', { timeZone: 'Europe/Podgorica' }); } catch { return s; }
   }
   const sidebarOpen = useUIStore(s => s.sidebarOpen);
   const toggleSidebar = useUIStore(s => s.toggleSidebar);
@@ -155,14 +162,15 @@ function EnterpriseShell() {
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Layout.Sider collapsible collapsed={!sidebarOpen} trigger={null} width={250} style={{ background: siderBg }}>
-        <div style={{ height: 56, display:'flex', alignItems:'center', justifyContent: sidebarOpen? 'space-between':'center', padding: '0 12px', color:'#fff', fontWeight:600 }}>
+      <Layout.Sider className="um-sider" collapsible collapsed={!sidebarOpen} trigger={null} width={250} style={{ background: siderBg }}>
+        <div className="um-sider-header" style={{ height: 56, display:'flex', alignItems:'center', justifyContent: sidebarOpen? 'space-between':'center', padding: '0 12px', color:'#fff', fontWeight:700, letterSpacing:.5 }}>
           {!sidebarOpen ? <img src="/logo.svg" alt="Arrivals" style={{ width: 24, height: 24 }} onError={(e)=>{(e.currentTarget as HTMLImageElement).src='/logo-cungu.png';}}/> : <span>Arrivals</span>}
-          {sidebarOpen && <Button size="small" type="text" style={{ color:'#fff' }} onClick={toggleSidebar} icon={sidebarOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />} />}
+          {sidebarOpen && <Button size="small" type="text" className="um-sider-toggle" style={{ color:'#E0E0E0' }} onClick={toggleSidebar} icon={sidebarOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />} />}
         </div>
-        <Menu theme="dark" mode="inline" selectedKeys={[location.pathname]} onClick={({ key }) => navigate(String(key))} items={[
+        <Menu className="um-sider-menu" theme="dark" mode="inline" selectedKeys={[location.pathname]} onClick={({ key }) => navigate(String(key))} items={[
           { key: '/dashboard', icon: <AppstoreOutlined />, label: 'Dashboard' },
           { key: '/arrivals', icon: <AppstoreOutlined />, label: 'Dolazci' },
+          { key: '/vozila', icon: <CarOutlined />, label: 'Vozila' },
           { key: '/containers', icon: <ContainerOutlined />, label: 'Kontejneri' },
           { key: '/analytics/arrivals', icon: <AppstoreOutlined />, label: 'Analitika (Dolazci)' },
           { key: '/analytics/containers', icon: <ContainerOutlined />, label: 'Analitika (Kontejneri)' },
@@ -181,53 +189,137 @@ function EnterpriseShell() {
             <Switch size="small" checkedChildren={<BulbOutlined />} unCheckedChildren={<BulbOutlined />} checked={darkMode} onChange={setDarkMode} />
           </Space>
           <div style={{ position:'relative' }} ref={notifRef}>
-            <Badge count={unreadCount} size="small">
+            <Badge count={unreadCount} size="small" style={{ backgroundColor:'#ef4444' }}>
               <Button type="text" icon={<BellOutlined />} onClick={toggleNotif} />
             </Badge>
-            {notifOpen && (
-              <div style={{ position:'absolute', right:0, top:36, width: 360, background:'#fff', border:'1px solid #f0f0f0', borderRadius:8, boxShadow:'0 6px 24px rgba(0,0,0,0.08)', overflow:'hidden', zIndex: 1000 }}>
-              <div style={{ fontWeight:700, padding:'10px 12px', borderBottom:'1px solid #f2f4f8' }}>Obavijesti</div>
-                <div style={{ padding:'6px 12px', display:'flex', gap:8, alignItems:'center' }}>
-                  <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:12 }}>
-                    <input type="checkbox" checked={notifUnreadOnly} onChange={async (e)=>{ setNotifUnreadOnly(e.target.checked); try { const qs = new URLSearchParams(); if (e.target.checked) qs.set('unread','1'); if (notifLimit) qs.set('limit', String(notifLimit)); const list = await apiGET<any[]>(`/api/notifications${qs.toString()?`?${qs.toString()}`:''}`, true); setNotifs((list || []).map((n:any) => ({ id: Number(n.id), text: String(n.text || ''), read: Boolean(n.read), created_at: n.created_at, navigate_url: n.navigate_url, entity_type: n.entity_type, entity_id: n.entity_id }))); } catch {} }} />
-                    Samo nepročitane
-                  </label>
-                  <select value={notifLimit} onChange={async (e)=>{ const v = Number(e.target.value)||20; setNotifLimit(v); try { const qs = new URLSearchParams(); if (notifUnreadOnly) qs.set('unread','1'); qs.set('limit', String(v)); const list = await apiGET<any[]>(`/api/notifications?${qs.toString()}`, true); setNotifs((list || []).map((n:any) => ({ id: Number(n.id), text: String(n.text || ''), read: Boolean(n.read), created_at: n.created_at, navigate_url: n.navigate_url, entity_type: n.entity_type, entity_id: n.entity_id }))); } catch {} }} style={{ fontSize:12 }}>
-                    <option value={10}>10</option>
-                    <option value={20}>20</option>
-                    <option value={50}>50</option>
-                  </select>
-                </div>
-                <div style={{ maxHeight: 280, overflow:'auto' }}>
-                  {(!notifs || notifs.length === 0) ? (
-                    <div style={{ padding:12, color:'#64748b' }}>Nema obavještenja.</div>
-                  ) : notifs.map((n) => (
-                    <div key={n.id} onClick={()=> openNotification(n)} style={{ padding:'10px 12px', borderBottom:'1px solid #f2f4f8', cursor:'pointer', background: n.read ? '#fff' : '#f8fafc' }}>
-                      <div style={{ display:'flex', gap:8, alignItems:'flex-start' }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: n.read ? 500 : 700, lineHeight: 1.2 }}>{n.text}</div>
-                        </div>
-                        <div style={{ fontSize:12, color:'#94a3b8', whiteSpace:'nowrap' }}>{fmtTime(n.created_at)}</div>
-                      </div>
-                      <div style={{ marginTop:4, display:'flex', justifyContent:'flex-end' }}>
-                        <a onClick={(e)=> deleteNotification(e, n)} style={{ color:'#ff4d4f', fontSize:12 }}>Obriši</a>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ padding: '8px 12px', display:'flex', justifyContent:'space-between', gap:8 }}>
-                  <div style={{ display:'flex', gap:8 }}>
-                    <Button size="small" onClick={markAllAsRead}>Mark all as read</Button>
-                    <Button size="small" onClick={async()=>{ try { await apiPOST(`/api/notifications/bulk_delete`, { all: true }, { auth: true }); } catch {} try { localStorage.removeItem('arrivals_notifications'); } catch {} setNotifs([]); setUnreadCount(0); setNotifOpen(false); }}>Clear all</Button>
-                  </div>
-                  <div style={{ display:'flex', gap:8 }}>
-                    <Button size="small" onClick={async()=>{ const ids = notifs.map(n=>n.id); if (!ids.length) { setNotifOpen(false); return; } try { await apiPOST(`/api/notifications/ack`, { ids, read: false }, { auth: true }); } catch {} setNotifs(prev=> prev.map(n=> ({ ...n, read: false }))); setUnreadCount(notifs.length); setNotifOpen(false); }}>Mark all as unread</Button>
-                    <Button size="small" onClick={()=> setNotifOpen(false)}>Zatvori</Button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
+          <Drawer
+            title="Obavijesti"
+            placement="right"
+            width={400}
+            open={notifOpen}
+            onClose={()=> setNotifOpen(false)}
+            destroyOnClose
+            styles={{ header: { padding: '10px 14px' }, body: { padding: 0 } }}
+            extra={
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <span style={{ fontSize:12, color:'#64748b' }}>Prikaži</span>
+                <select value={notifLimit} onChange={async (e)=>{ const v = Number(e.target.value)||20; setNotifLimit(v); try { const qs = new URLSearchParams(); qs.set('limit', String(v)); const list = await apiGET<any[]>(`/api/notifications?${qs.toString()}`, true); setNotifList((list || []).map((n:any) => ({ id: Number(n.id), text: String(n.text || ''), read: Boolean(n.read), created_at: n.created_at, navigate_url: n.navigate_url, entity_type: n.entity_type, entity_id: n.entity_id, type: n.type, event: n.event }))); } catch {} }} style={{ fontSize:12 }}>
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+              </div>
+            }
+          >
+            {/* Filters & global actions (sticky) */}
+            <div style={{ position:'sticky', top:0, zIndex:1, background:'#fff', borderBottom:'1px solid #EAEAEA', padding:'10px 12px' }}>
+              <div className="notif-inline" onClick={(e)=> e.stopPropagation()}>
+                <Switch className="notif-switch" size="small" checkedChildren="On" unCheckedChildren="Off" checked={notifUnreadOnly} onChange={async (checked)=>{
+                  setNotifUnreadOnly(checked);
+                  try {
+                    const qs = new URLSearchParams();
+                    if (checked) qs.set('unread','1');
+                    if (notifLimit) qs.set('limit', String(notifLimit));
+                    const list = await apiGET<any[]>(`/api/notifications${qs.toString()?`?${qs.toString()}`:''}`, true);
+                    setNotifList((list || []).map((n:any) => ({ id: Number(n.id), text: String(n.text || ''), read: Boolean(n.read), created_at: n.created_at, navigate_url: n.navigate_url, entity_type: n.entity_type, entity_id: n.entity_id, type: n.type, event: n.event })));
+                  } catch {}
+                }} />
+                <span>Samo nepročitane</span>
+                <span className="notif-count">{(notifs || []).filter(n => !n.read).length}</span>
+              </div>
+            </div>
+            {/* List */}
+            <div style={{ maxHeight: 'calc(100vh - 180px)', overflow:'auto', background:'#fff' }} className="notif-list">
+              {(!notifs || notifs.length === 0) ? (
+                <div style={{ padding:20, color:'#64748b', textAlign:'center' }}>
+                  <div style={{ fontSize:28, marginBottom:6 }}>📭</div>
+                  <div>Nema novih obavijesti</div>
+                </div>
+              ) : notifs.map((n) => {
+                const menuItems = [
+                  { key: 'open', label: 'Detalji', icon: <EyeOutlined /> },
+                  { key: 'mark', label: n.read? 'Označi kao nepročitano':'Označi kao pročitano', icon: <CheckCircleOutlined /> },
+                  { type: 'divider' as const },
+                  { key: 'delete', label: 'Izbriši', icon: <DeleteOutlined />, danger: true as any },
+                ];
+                return (
+                  <div key={n.id}
+                    className="notif-item"
+                    style={{ position:'relative', padding:'16px 24px', borderBottom:'1px solid #F5F5F5', cursor:'pointer', background: n.read ? '#fff' : '#F0F2F5' }}
+                    onMouseEnter={(e)=> (e.currentTarget.style.background = n.read? '#EAEAEA' : '#EAEAEA')}
+                    onMouseLeave={(e)=> (e.currentTarget.style.background = n.read? '#fff' : '#F0F2F5')}
+                    onClick={()=> openNotification(n)}
+                  >
+                    <div style={{ display:'flex', alignItems:'flex-start', gap:10 }}>
+                      <span style={{ width:8, height:8, borderRadius:999, background: n.read? 'transparent':'#5A67D8', marginTop:7 }} />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:16, fontWeight: n.read? 500:700, color: n.read? '#555' : '#333', lineHeight:1.4 }}>{n.text}</div>
+                        <div style={{ fontSize:13, color:'#999', marginTop:4 }}>{fmtTime(n.created_at)}</div>
+                      </div>
+                      <Dropdown
+                        menu={{ items: menuItems, onClick: async ({ key }) => {
+                          if (key==='open') { if (n.navigate_url) window.location.href = n.navigate_url; else openNotification(n); return; }
+                          if (key==='mark') {
+                            try { await apiPOST(`/api/notifications/ack`, { ids:[n.id], read: !n.read }, { auth: true }); } catch {}
+                            try { setNotifList(notifs.map(x => x.id===n.id ? { ...x, read: !n.read } : x)); } catch {}
+                            setUnreadCount(Math.max(0, unreadCount + (n.read? 1 : -1)));
+                            return;
+                          }
+                          if (key==='delete') {
+                            try { await fetch(`${API_BASE}/api/notifications/${n.id}`, { method:'DELETE', headers:{ 'Accept':'application/json', 'Authorization': `Bearer ${getToken() || ''}` }, credentials:'include' as RequestCredentials }); } catch {}
+                            try { setNotifList(notifs.filter(x => x.id !== n.id)); } catch {}
+                            setUnreadCount(Math.max(0, unreadCount - (n.read? 0 : 1)));
+                            return;
+                          }
+                        } }}
+                        trigger={["click"]}
+                      >
+                        <Button type="text" size="small" icon={<MoreOutlined />} onClick={(e)=> e.stopPropagation()} />
+                      </Dropdown>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Footer */}
+            <div style={{ padding: '10px 12px', display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, background:'#fafafa', borderTop:'1px solid #f1f5f9' }}>
+              <div style={{ display:'flex', gap:10 }}>
+                <Button
+                  className="notif-danger-btn"
+                  danger
+                  type="primary"
+                  size="small"
+                  onClick={()=>{
+                    modal.confirm({
+                      title: 'Izbriši sve obavijesti?',
+                      content: 'Ova radnja je nepovratna.',
+                      okText: 'Izbriši sve',
+                      okType: 'danger',
+                      cancelText: 'Odustani',
+                      onOk: async ()=> {
+                        try { await apiPOST(`/api/notifications/bulk_delete`, { unread: notifUnreadOnly }, { auth: true }); } catch {}
+                        try { localStorage.removeItem('arrivals_notifications'); } catch {}
+                        try {
+                          const qs = new URLSearchParams();
+                          if (notifUnreadOnly) qs.set('unread','1');
+                          if (notifLimit) qs.set('limit', String(notifLimit));
+                          const list = await apiGET<any[]>(`/api/notifications${qs.toString()?`?${qs.toString()}`:''}`, true);
+                          setNotifList((list || []).map((n:any) => ({ id: Number(n.id), text: String(n.text || ''), read: Boolean(n.read), created_at: n.created_at, navigate_url: n.navigate_url, entity_type: n.entity_type, entity_id: n.entity_id, type: n.type, event: n.event })));
+                        } catch {}
+                        setUnreadCount(0);
+                      }
+                    });
+                  }}
+                >
+                  Izbriši sve
+                </Button>
+              </div>
+              <div style={{ display:'flex', gap:10 }}>
+                <Button size="small" onClick={()=> { window.location.href = '/notifications'; }}>Prikaži sve</Button>
+              </div>
+            </div>
+          </Drawer>
           <Button type="text" icon={<SettingOutlined />} onClick={()=> setDrawerOpen(true)} />
           <Dropdown menu={{ items: userMenuItems }} trigger={["click"]}>
             <Avatar style={{ background:'#3f5ae0', cursor:'pointer' }} size="small">A</Avatar>
@@ -238,7 +330,9 @@ function EnterpriseShell() {
             <Route path="/dashboard" element={<MuseDashboard />} />
             <Route path="/arrivals" element={<ArrivalsCards />} />
             <Route path="/containers" element={<ContainersPage />} />
+            <Route path="/vozila" element={<VozilaPage />} />
             <Route path="/users" element={<UsersPage />} />
+            <Route path="/admin/auth-debug" element={<AuthDebug />} />
             <Route path="/analytics/arrivals" element={<AnalyticsArrivals />} />
             <Route path="/analytics/containers" element={<AnalyticsContainers />} />
             <Route path="/settings" element={<SettingsPage />} />
