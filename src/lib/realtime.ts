@@ -176,9 +176,11 @@ export function wireRealtimeToQueryClient(qc: QueryClient) {
         return next;
       });
       // Remove item-level cache
-      qc.removeQueries({ queryKey: ['arrivals', idNum], exact: true }).catch(() => {});
+      try {
+        qc.removeQueries({ queryKey: ['arrivals', idNum], exact: true });
+      } catch {}
       // Optionally invalidate analytics
-      qc.invalidateQueries({ queryKey: ['analytics','arrivals'] }).catch(() => {});
+      void qc.invalidateQueries({ queryKey: ['analytics','arrivals'] }).catch(() => {});
     }
     if (evt.type === 'arrivals.created' && evt.data) {
       const row = evt.data;
@@ -188,7 +190,7 @@ export function wireRealtimeToQueryClient(qc: QueryClient) {
         if (oldData.some((r: any) => Number(r.id) === Number(row.id))) return oldData;
         return [row, ...oldData];
       });
-      qc.invalidateQueries({ queryKey: ['analytics','arrivals'] }).catch(() => {});
+      void qc.invalidateQueries({ queryKey: ['analytics','arrivals'] }).catch(() => {});
     }
   });
 }

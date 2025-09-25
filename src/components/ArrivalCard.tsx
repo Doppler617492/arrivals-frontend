@@ -65,8 +65,9 @@ export default function ArrivalCard({ arrival, onDetails, onUploadFiles, onDelet
   const [resp, setResp] = React.useState(arrival.responsible || "");
   const [loc, setLoc] = React.useState(arrival.location || "");
 
-  const authHeaders = () => {
+  const authHeaders = (required = false) => {
     const t = localStorage.getItem("token") || localStorage.getItem("access_token");
+    if (!t && required) { alert('Potrebna je prijava'); throw new Error('AUTH_MISSING'); }
     return t ? { Authorization: `Bearer ${t}` } : undefined;
   };
   const API_BASE = (window as any).API_BASE || "";
@@ -77,11 +78,7 @@ export default function ArrivalCard({ arrival, onDetails, onUploadFiles, onDelet
       const res = await fetch(`${API_BASE}/api/arrivals/${arrival.id}`, {
         method: "PATCH",
         credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          ...(authHeaders() ? authHeaders() : {}),
-        },
+        headers: { "Content-Type": "application/json", Accept: "application/json", ...(authHeaders(true) || {}) },
         body: JSON.stringify({
           responsible: val,
           // aliases for backends that persist assignee fields
@@ -115,7 +112,7 @@ export default function ArrivalCard({ arrival, onDetails, onUploadFiles, onDelet
       const res = await fetch(`${API_BASE}/api/arrivals/${arrival.id}`, {
         method: "PATCH",
         credentials: "include",
-        headers: { "Content-Type": "application/json", Accept: "application/json", ...authHeaders() },
+        headers: { "Content-Type": "application/json", Accept: "application/json", ...(authHeaders(true) || {}) },
         body: JSON.stringify({ location: val }),
       });
       if (res.ok) {

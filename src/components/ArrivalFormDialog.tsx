@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Modal, Form, Input, Select, DatePicker, Button } from 'antd';
+import { Modal, Form, Input, Select, DatePicker } from 'antd';
 // Loosen type for form to avoid strict backend union constraints
 type ArrivalLoose = {
   id?: number;
@@ -28,13 +28,6 @@ const STATUS_OPTIONS = [
   { value: "in_process", label: "U procesu" },
   { value: "done", label: "Završeno" },
   { value: "delayed", label: "Kašnjenje" },
-];
-
-const TYPE_OPTIONS = [
-  { value: "truck", label: "Šleper" },
-  { value: "container", label: "Kontejner" },
-  { value: "van", label: "Kombi" },
-  { value: "other", label: "Ostalo" },
 ];
 
 export default function ArrivalFormDialog({

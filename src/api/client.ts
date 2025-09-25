@@ -3,8 +3,19 @@ const RAW_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8081";
 export const API_BASE = RAW_BASE.replace(/\/+$/, ""); // bez završnog '/'
 
 export const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
+const AUTH_COOKIES = String(import.meta.env.VITE_AUTH_COOKIES || "0").toLowerCase() === "1";
 
 export function getToken() { return localStorage.getItem("token"); }
+
+function ensureAuth(): string {
+  const t = getToken();
+  if (!t) {
+    // Do not send requests with "Bearer null"; block early with a clear error
+    try { window.dispatchEvent(new CustomEvent('auth:missing')); } catch {}
+    throw new Error("401 Unauthorized: missing token");
+  }
+  return t;
+}
 export function setToken(t: string | null, remember: boolean = true) {
   if (!t) {
     try { localStorage.removeItem("token"); localStorage.removeItem("access_token"); } catch {}
@@ -31,6 +42,13 @@ export function qs(params: Record<string, any>) {
 function makeUrl(path: string) {
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${API_BASE}${p}`;
+}
+
+function getCookie(name: string): string | undefined {
+  try {
+    const m = document.cookie.match(new RegExp("(?:^|; )" + name.replace(/([.$?*|{}()\[\]\\/+^])/g, "\\$1") + "=([^;]*)"));
+    return m ? decodeURIComponent(m[1]) : undefined;
+  } catch { return undefined; }
 }
 
 /* ------------------------------ internals ------------------------------ */
@@ -64,11 +82,13 @@ function withTimeout(ms?: number) {
 export async function apiGET<T>(path: string, auth = false): Promise<T> {
   const t = withTimeout(30_000);
   try {
+    const token = auth ? ensureAuth() : undefined;
     const res = await fetch(makeUrl(path), {
       headers: {
         Accept: "application/json",
-        ...(auth ? { Authorization: `Bearer ${getToken()}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
+      credentials: AUTH_COOKIES ? 'include' : undefined,
       signal: t?.signal,
     });
     return await handleJson<T>(res);
@@ -84,15 +104,18 @@ export async function apiPOST<T>(
   const t = withTimeout(30_000);
   try {
     const url = makeUrl(path);
+    const token = opts?.auth ? ensureAuth() : undefined;
     let res = await fetch(url, {
       method: "POST",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        ...(opts?.auth ? { Authorization: `Bearer ${getToken()}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(opts?.useApiKey && API_KEY ? { "X-API-Key": API_KEY } : {}),
+        ...(AUTH_COOKIES ? { 'X-CSRF-TOKEN': getCookie('csrf_access_token') || '' } : {}),
       },
       body: JSON.stringify(body),
+      credentials: AUTH_COOKIES ? 'include' : undefined,
       signal: t?.signal,
     });
     // Fallback #1: some servers require trailing slash for POST (405/308)
@@ -104,10 +127,12 @@ export async function apiPOST<T>(
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          ...(opts?.auth ? { Authorization: `Bearer ${getToken()}` } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...(opts?.useApiKey && API_KEY ? { "X-API-Key": API_KEY } : {}),
+          ...(AUTH_COOKIES ? { 'X-CSRF-TOKEN': getCookie('csrf_access_token') || '' } : {}),
         },
         body: JSON.stringify(body),
+        credentials: AUTH_COOKIES ? 'include' : undefined,
         signal: t?.signal,
       });
     }
@@ -119,10 +144,12 @@ export async function apiPOST<T>(
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          ...(opts?.auth ? { Authorization: `Bearer ${getToken()}` } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...(opts?.useApiKey && API_KEY ? { "X-API-Key": API_KEY } : {}),
+          ...(AUTH_COOKIES ? { 'X-CSRF-TOKEN': getCookie('csrf_access_token') || '' } : {}),
         },
         body: JSON.stringify(body),
+        credentials: AUTH_COOKIES ? 'include' : undefined,
         signal: t?.signal,
       });
     }
@@ -134,14 +161,17 @@ export async function apiPOST<T>(
 export async function apiPATCH<T>(path: string, body: any, auth = false): Promise<T> {
   const t = withTimeout(30_000);
   try {
+    const token = auth ? ensureAuth() : undefined;
     const res = await fetch(makeUrl(path), {
       method: "PATCH",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        ...(auth ? { Authorization: `Bearer ${getToken()}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(AUTH_COOKIES ? { 'X-CSRF-TOKEN': getCookie('csrf_access_token') || '' } : {}),
       },
       body: JSON.stringify(body),
+      credentials: AUTH_COOKIES ? 'include' : undefined,
       signal: t?.signal,
     });
     return await handleJson<T>(res);
@@ -152,12 +182,15 @@ export async function apiPATCH<T>(path: string, body: any, auth = false): Promis
 export async function apiDELETE<T>(path: string, auth = false): Promise<T> {
   const t = withTimeout(30_000);
   try {
+    const token = auth ? ensureAuth() : undefined;
     const res = await fetch(makeUrl(path), {
       method: "DELETE",
       headers: {
         Accept: "application/json",
-        ...(auth ? { Authorization: `Bearer ${getToken()}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(AUTH_COOKIES ? { 'X-CSRF-TOKEN': getCookie('csrf_access_token') || '' } : {}),
       },
+      credentials: AUTH_COOKIES ? 'include' : undefined,
       signal: t?.signal,
     });
     return await handleJson<T>(res);
@@ -167,10 +200,16 @@ export async function apiDELETE<T>(path: string, auth = false): Promise<T> {
 /* -------------------------------- UPLOAD ------------------------------- */
 export async function apiUPLOAD<T>(path: string, form: FormData, auth = false): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (auth) headers["Authorization"] = `Bearer ${getToken()}`;
+  if (auth) {
+    const token = ensureAuth();
+    headers["Authorization"] = `Bearer ${token}`;
+  }
   const t = withTimeout(60_000);
   try {
-    const res = await fetch(makeUrl(path), { method: "POST", headers, body: form, signal: t?.signal });
+    const res = await fetch(makeUrl(path), { method: "POST", headers: {
+      ...headers,
+      ...(AUTH_COOKIES ? { 'X-CSRF-TOKEN': getCookie('csrf_access_token') || '' } : {}),
+    }, body: form, signal: t?.signal, credentials: AUTH_COOKIES ? 'include' : undefined });
     return await handleJson<T>(res);
   } finally { t?.done?.(); }
 }

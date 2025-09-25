@@ -1,6 +1,7 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { Modal } from 'antd';
+import type { ModalProps } from 'antd';
 
 type DialogContextType = {
   open: boolean;
@@ -67,18 +68,22 @@ export function DialogTrigger({
   if (!ctx) return children;
 
   const onClick = () => ctx.setOpen(true);
-  return asChild
-    ? React.cloneElement(children, {
-        onClick: (e: any) => {
-          children.props.onClick?.(e);
-          onClick();
-        },
-      })
-    : (
-      <button onClick={onClick} className="inline-flex items-center rounded-md px-3 py-2 bg-gray-900 text-white">
-        {children}
-      </button>
-    );
+  if (asChild) {
+    const child = children as React.ReactElement<any>;
+    return React.cloneElement(child, {
+      onClick: (e: any) => {
+        if (typeof child.props?.onClick === 'function') {
+          child.props.onClick(e);
+        }
+        onClick();
+      },
+    });
+  }
+  return (
+    <button onClick={onClick} className="inline-flex items-center rounded-md px-3 py-2 bg-gray-900 text-white">
+      {children}
+    </button>
+  );
 }
 
 function Portal({ children }: { children: React.ReactNode }) {
@@ -94,7 +99,7 @@ export function DialogContent({
 }: {
   className?: string;
   children: React.ReactNode;
-} & React.HTMLAttributes<HTMLDivElement>) {
+} & Omit<ModalProps, "open">) {
   const ctx = React.useContext(DialogContext);
   if (!ctx || !ctx.open) return null;
 
@@ -102,7 +107,13 @@ export function DialogContent({
 
   return (
     <Portal>
-      <Modal open={ctx.open} onCancel={close} footer={null} className={className} {...rest}>
+      <Modal
+        open={ctx.open}
+        onCancel={close}
+        footer={null}
+        className={className}
+        {...rest}
+      >
         {children}
       </Modal>
     </Portal>
@@ -134,10 +145,12 @@ export function DialogClose({
   const onClick = () => ctx.setOpen(false);
 
   if (asChild && React.isValidElement(children)) {
-    const child: any = children;
+    const child = children as React.ReactElement<any>;
     return React.cloneElement(child, {
       onClick: (e: any) => {
-        child.props?.onClick?.(e);
+        if (typeof child.props?.onClick === 'function') {
+          child.props.onClick(e);
+        }
         onClick();
       },
     });

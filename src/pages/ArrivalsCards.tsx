@@ -340,14 +340,6 @@ export default function ArrivalsCards() {
       localStorage.setItem('arrivals_category_map', JSON.stringify(map));
     } catch {}
   }
-  async function updateCategory(id: number, category: string) {
-    setRows(prev => prev.map(r => r.id === id ? { ...r, category } : r));
-    setLocalCategory(id, category);
-    try {
-      await apiPATCH(`/api/arrivals/${id}`, { category }, true);
-    } catch {}
-  }
-
   function onAdd() {
     setEditing(null);
     form.resetFields();
@@ -362,18 +354,50 @@ export default function ArrivalsCards() {
     setOpen(true);
   }
   async function onDelete(r: Arrival) {
-    // Optimistic remove from local state
-    setRows(prev => prev.filter(x => x.id !== r.id));
-    // Update React Query cache immediately
+    const idNum = Number(r.id);
+    // Optimistically drop the card locally and from cached lists
+    setRows((prev) => prev.filter((x) => Number(x.id) !== idNum));
     try {
-      qc.setQueriesData({ queryKey: ['arrivals'] }, (old: any) => Array.isArray(old) ? old.filter((x: any) => Number(x.id) !== Number(r.id)) : old);
+      qc.setQueriesData({ queryKey: ['arrivals'] }, (old: any) =>
+        Array.isArray(old) ? old.filter((x: any) => Number(x.id) !== idNum) : old
+      );
     } catch {}
+
+    const restore = () => {
+      setRows((prev) => {
+        if (prev.some((x) => Number(x.id) === idNum)) return prev;
+        return [...prev, r];
+      });
+      try {
+        qc.setQueriesData({ queryKey: ['arrivals'] }, (old: any) => {
+          if (!Array.isArray(old)) return old;
+          if (old.some((x: any) => Number(x.id) === idNum)) return old;
+          return [...old, r];
+        });
+      } catch {}
+    };
+
     try {
-      await apiDELETE(`/api/arrivals/${r.id}`, true);
+      await apiDELETE(`/api/arrivals/${idNum}`, true);
       message.success('Obrisano');
-    } catch (e: any) {
-      message.error(e?.message || 'Brisanje nije uspjelo');
-      // Revalidate to restore if backend failed
+    } catch (err: any) {
+      const raw = String(err?.message || '').trim();
+      const needsFallback = /405|method not allowed|not allowed|unsupported/i.test(raw);
+      if (needsFallback) {
+        try {
+          await apiPOST(`/api/arrivals/delete`, { id: idNum }, { auth: true });
+          message.success('Obrisano');
+          return;
+        } catch (retryErr: any) {
+          const fallbackMsg = String(retryErr?.message || raw || 'Brisanje nije uspjelo').trim();
+          message.error(fallbackMsg || 'Brisanje nije uspjelo');
+          restore();
+          qc.invalidateQueries({ queryKey: ['arrivals'] });
+          return;
+        }
+      }
+      message.error(raw || 'Brisanje nije uspjelo');
+      restore();
       qc.invalidateQueries({ queryKey: ['arrivals'] });
     }
   }

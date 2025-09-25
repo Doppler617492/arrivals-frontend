@@ -20,9 +20,9 @@ const API_BASE =
   (import.meta as any)?.env?.DEV
     ? ""
     : ((import.meta as any)?.env?.VITE_API_BASE?.replace(/\/$/, "") || "");
-const authHeaders = (): Record<string, string> => {
-  // Try to get "token", then fallback to "access_token"
-  const token = localStorage.getItem("token") || localStorage.getItem("access_token");
+const authHeaders = (required = false): Record<string, string> => {
+  const token = localStorage.getItem('token') || localStorage.getItem('access_token');
+  if (!token && required) { alert('Potrebna je prijava'); throw new Error('AUTH_MISSING'); }
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
@@ -339,7 +339,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
     const res = await fetch(`${API_BASE}/api/arrivals/${id}/files`, {
       method: "GET",
       credentials: "include",
-      headers: { Accept: "application/json", ...authHeaders() },
+      headers: { Accept: "application/json", ...authHeaders(true) },
     });
     if (res.ok) {
       const filesData = await res.json();
@@ -370,7 +370,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
         const res = await fetch(url, {
           method: url.endsWith("/rename") ? "POST" : "PATCH",
           credentials: "include",
-          headers: { "Content-Type": "application/json", Accept: "application/json", ...authHeaders() },
+          headers: { "Content-Type": "application/json", Accept: "application/json", ...authHeaders(true) },
           body: JSON.stringify(body),
         });
         if (res.ok) {
@@ -414,7 +414,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
       const res = await fetch(`${API_BASE}/api/arrivals`, {
         method: "GET",
         credentials: "include",
-        headers: { Accept: "application/json", ...authHeaders() },
+        headers: { Accept: "application/json", ...authHeaders(true) },
       });
       if (!res.ok) return [];
       const data = await res.json().catch(() => []);
@@ -453,7 +453,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
           const res = await fetch(ep, {
             method: "GET",
             credentials: "include",
-            headers: { Accept: "application/json", ...authHeaders() },
+            headers: { Accept: "application/json", ...authHeaders(true) },
           });
           if (!res.ok) continue;
           const data = await res.json().catch(() => null);
@@ -600,7 +600,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
       const headersCreate: Record<string, string> = {
         "Content-Type": "application/json",
         Accept: "application/json",
-        ...authHeaders(),
+        ...authHeaders(true),
       };
       const res = await fetch(`${API_BASE}/api/arrivals`, {
         method: "POST",
@@ -671,7 +671,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
       const headersJSON: Record<string, string> = {
         "Content-Type": "application/json",
         Accept: "application/json",
-        ...authHeaders(),
+        ...authHeaders(true),
       };
       const r = await fetch(targetUrl, {
         method,
@@ -703,7 +703,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
           headers: {
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
             Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
-            ...authHeaders(),
+            ...authHeaders(true),
           } as Record<string, string>,
           body: usp.toString(),
         });
@@ -782,7 +782,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
       fd.append("file", file, file.name);
       const headersUpload: Record<string, string> = {
         Accept: "application/json",
-        ...authHeaders(), // NEMOJ postavljati Content-Type; browser dodaje boundary
+        ...authHeaders(true), // NEMOJ postavljati Content-Type; browser dodaje boundary
       };
       // Upload the file
       const res = await fetch(`${API_BASE}/api/arrivals/${id}/files`, {
@@ -801,7 +801,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
         credentials: "include",
         headers: {
           Accept: "application/json",
-          ...authHeaders(),
+          ...authHeaders(true),
         },
       });
       if (!filesRes.ok) {
@@ -881,7 +881,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
             return true;
           }
           // For API-scoped URLs keep auth and credentials
-          let res = await fetch(u, { method: "HEAD", credentials: "include", headers: { ...authHeaders() } });
+          let res = await fetch(u, { method: "HEAD", credentials: "include", headers: { ...authHeaders(true) } });
           if (res.ok) {
             window.open(u, "_blank", "noopener,noreferrer");
             return true;
@@ -892,7 +892,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
               credentials: "include",
               headers: {
                 Accept: "application/pdf,image/*,text/plain,application/octet-stream",
-                ...authHeaders(),
+                ...authHeaders(true),
               } as Record<string, string>,
             });
             if (res.ok) {
@@ -949,7 +949,7 @@ export default function ArrivalModal({ open, onClose, arrival, onSaved }: Props)
           window.open(u, "_blank", "noopener,noreferrer");
           return;
         }
-        const res = await fetch(u, { method: "HEAD", credentials: "include", headers: { ...authHeaders() } });
+        const res = await fetch(u, { method: "HEAD", credentials: "include", headers: { ...authHeaders(true) } });
         if (res.ok || res.status === 405) {
           window.open(u, "_blank", "noopener,noreferrer");
           return;

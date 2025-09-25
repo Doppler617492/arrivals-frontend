@@ -1,6 +1,6 @@
 import React from 'react';
 import { Card, Row, Col, Segmented, DatePicker, Space, Select, Statistic, Table, Modal, Button, message, Switch } from 'antd';
-import { API_BASE } from '../api/client';
+import { API_BASE, apiGET } from '../api/client';
 // Recharts removed (migrated to ECharts)
 import ReactECharts from 'echarts-for-react';
 import * as echarts from 'echarts';
@@ -9,6 +9,145 @@ import { useUIStore } from '../store';
 import { realtime } from '../lib/realtime';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { exportCSV as exportCSVUtil } from '../utils/exports';
+
+type BreakdownItem = {
+  label: string;
+  count: number;
+  total_value: number;
+  avg_delay_days: number;
+  on_time_rate: number;
+  scheduled_samples?: number;
+};
+
+const euroFormatter = new Intl.NumberFormat('sr-RS', {
+  style: 'currency',
+  currency: 'EUR',
+  maximumFractionDigits: 2,
+});
+
+function formatCurrency(value: number | undefined | null): string {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return '€0,00';
+  return euroFormatter.format(num);
+}
+
+function formatPercent(value: number | undefined | null): string {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return '0%';
+  return `${Math.round(num * 100)}%`;
+}
+
+function formatDelayDays(value: number | undefined | null): string {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num) || Math.abs(num) < 0.05) {
+    return '0.0';
+  }
+  return num.toFixed(1);
+}
+
+function buildBreakdownChart(
+  items: BreakdownItem[],
+  textColor: string,
+  gridColor: string,
+  color: string,
+): echarts.EChartsOption {
+  if (!items || items.length === 0) {
+    return {
+      title: {
+        text: 'Nema podataka za zadati period',
+        left: 'center',
+        top: 'middle',
+        textStyle: { color: '#9ca3af', fontSize: 14 },
+      },
+    };
+  }
+  const topItems = items.slice(0, 8);
+  return {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: any) => {
+        if (!params || !params.length) return '';
+        const datum = params[0].data;
+        const total = formatCurrency(datum.value);
+        const count = datum.count ?? 0;
+        const onTime = formatPercent(datum.onTimeRate ?? 0);
+        return `
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <strong>${datum.name}</strong>
+            <span>Ukupno: ${total}</span>
+            <span>Dolazaka: ${count}</span>
+            <span>On-time: ${onTime}</span>
+          </div>
+        `;
+      },
+    },
+    grid: { left: 140, right: 32, top: 20, bottom: 24 },
+    xAxis: {
+      type: 'value',
+      axisLabel: {
+        color: textColor,
+        formatter: (v: number) => formatCurrency(v),
+      },
+      splitLine: { lineStyle: { color: gridColor, opacity: 0.3 } },
+    },
+    yAxis: {
+      type: 'category',
+      data: topItems.map((item) => item.label),
+      axisLabel: { color: textColor },
+    },
+    series: [
+      {
+        type: 'bar',
+        data: topItems.map((item) => ({
+          value: Number(item.total_value || 0),
+          count: item.count,
+          onTimeRate: item.on_time_rate,
+          name: item.label,
+        })),
+        itemStyle: {
+          color,
+          borderRadius: [0, 6, 6, 0],
+        },
+        label: {
+          show: true,
+          position: 'right',
+          formatter: (d: any) => `${d.data.count ?? 0}×`,
+          color: textColor,
+        },
+      },
+    ],
+  };
+}
+
+function makeBreakdownColumns(labelTitle: string) {
+  return [
+    { title: labelTitle, dataIndex: 'label', key: 'label' },
+    { title: 'Dolazaka', dataIndex: 'count', key: 'count', align: 'right' as const },
+    {
+      title: 'Ukupna vrijednost',
+      dataIndex: 'total_value',
+      key: 'total_value',
+      align: 'right' as const,
+      render: (v: number) => formatCurrency(v),
+    },
+    {
+      title: 'Prosječno kašnjenje (dani)',
+      dataIndex: 'avg_delay_days',
+      key: 'avg_delay_days',
+      align: 'right' as const,
+      render: (v: number) => formatDelayDays(v),
+    },
+    {
+      title: 'On-time %',
+      dataIndex: 'on_time_rate',
+      key: 'on_time_rate',
+      align: 'right' as const,
+      render: (v: number) => formatPercent(v),
+    },
+  ];
+}
 
 export default function AnalyticsArrivals() {
   const dark = useUIStore(s => s.darkMode);
@@ -150,7 +289,8 @@ export default function AnalyticsArrivals() {
     queryKey: ['analytics','arrivals','on-time', filtersKey],
     queryFn: async () => {
       const q = buildQS();
-      return await fetch(`${API_BASE}/api/analytics/arrivals/on-time${q?`?${q}`:''}`).then(r=>r.json());
+      try { return await apiGET<any>(`/api/analytics/arrivals/on-time${q?`?${q}`:''}`, true); }
+      catch { return { buckets: {}, on_time_or_early_rate: 0 }; }
     },
     staleTime: 300_000,
   });
@@ -159,7 +299,58 @@ export default function AnalyticsArrivals() {
     queryKey: ['analytics','arrivals','lead-time', filtersKey],
     queryFn: async () => {
       const q = buildQS();
-      return await fetch(`${API_BASE}/api/analytics/arrivals/lead-time${q?`?${q}`:''}`).then(r=>r.json());
+      try { return await apiGET<any>(`/api/analytics/arrivals/lead-time${q?`?${q}`:''}`, true); }
+      catch { return { avg_days: 0, p95_days: 0 }; }
+    },
+    staleTime: 300_000,
+  });
+
+  const qByCategory = useQuery({
+    queryKey: ['analytics','arrivals','by-category', filtersKey],
+    queryFn: async () => {
+      const q = buildQS();
+      const res = await apiGET<{ items?: BreakdownItem[] }>(`/api/analytics/arrivals/by-category${q?`?${q}`:''}`, true).catch(() => ({ items: [] }));
+      return Array.isArray(res?.items) ? res.items : [];
+    },
+    staleTime: 300_000,
+  });
+
+  const qByResponsible = useQuery({
+    queryKey: ['analytics','arrivals','by-responsible', filtersKey],
+    queryFn: async () => {
+      const q = buildQS();
+      const res = await apiGET<{ items?: BreakdownItem[] }>(`/api/analytics/arrivals/by-responsible${q?`?${q}`:''}`, true).catch(() => ({ items: [] }));
+      return Array.isArray(res?.items) ? res.items : [];
+    },
+    staleTime: 300_000,
+  });
+
+  const qByLocation = useQuery({
+    queryKey: ['analytics','arrivals','by-location', filtersKey],
+    queryFn: async () => {
+      const q = buildQS();
+      const res = await apiGET<{ items?: BreakdownItem[] }>(`/api/analytics/arrivals/by-location${q?`?${q}`:''}`, true).catch(() => ({ items: [] }));
+      return Array.isArray(res?.items) ? res.items : [];
+    },
+    staleTime: 300_000,
+  });
+
+  const qByCarrier = useQuery({
+    queryKey: ['analytics','arrivals','by-carrier', filtersKey],
+    queryFn: async () => {
+      const q = buildQS();
+      const res = await apiGET<{ items?: BreakdownItem[] }>(`/api/analytics/arrivals/by-carrier${q?`?${q}`:''}`, true).catch(() => ({ items: [] }));
+      return Array.isArray(res?.items) ? res.items : [];
+    },
+    staleTime: 300_000,
+  });
+
+  const qByAgent = useQuery({
+    queryKey: ['analytics','arrivals','by-agent', filtersKey],
+    queryFn: async () => {
+      const q = buildQS();
+      const res = await apiGET<{ items?: BreakdownItem[] }>(`/api/analytics/arrivals/by-agent${q?`?${q}`:''}`, true).catch(() => ({ items: [] }));
+      return Array.isArray(res?.items) ? res.items : [];
     },
     staleTime: 300_000,
   });
@@ -179,6 +370,19 @@ export default function AnalyticsArrivals() {
   const [topSup, setTopSup] = React.useState<any[]>([]);
   const [onTime, setOnTime] = React.useState<any>(null);
   const [lead, setLead] = React.useState<any>(null);
+  const byCategory = qByCategory.data ?? [];
+  const byResponsible = qByResponsible.data ?? [];
+  const byLocation = qByLocation.data ?? [];
+  const byCarrier = qByCarrier.data ?? [];
+  const byAgent = qByAgent.data ?? [];
+  const breakdownPalette = ['#2563eb', '#16a34a', '#f97316', '#7c3aed', '#dc2626'];
+  const breakdownSections = React.useMemo(() => ([
+    { key: 'category', title: 'Po kategoriji robe', label: 'Kategorija', items: byCategory, color: breakdownPalette[0], loading: qByCategory.isFetching },
+    { key: 'responsible', title: 'Po odgovornoj osobi', label: 'Odgovorna osoba', items: byResponsible, color: breakdownPalette[1], loading: qByResponsible.isFetching },
+    { key: 'location', title: 'Po lokaciji', label: 'Lokacija', items: byLocation, color: breakdownPalette[2], loading: qByLocation.isFetching },
+    { key: 'carrier', title: 'Po prevozniku', label: 'Prevoznik', items: byCarrier, color: breakdownPalette[3], loading: qByCarrier.isFetching },
+    { key: 'agent', title: 'Po agentu', label: 'Agent', items: byAgent, color: breakdownPalette[4], loading: qByAgent.isFetching },
+  ]), [byCategory, byResponsible, byLocation, byCarrier, byAgent, qByCategory.isFetching, qByResponsible.isFetching, qByLocation.isFetching, qByCarrier.isFetching, qByAgent.isFetching]);
 
   React.useEffect(()=>{ if (Array.isArray(qTopSup.data)) setTopSup(qTopSup.data); }, [qTopSup.data]);
   React.useEffect(()=>{ if (qOnTime.data) setOnTime(qOnTime.data); }, [qOnTime.data]);
@@ -241,7 +445,7 @@ export default function AnalyticsArrivals() {
     const qs = new URLSearchParams();
     qs.set('month', month);
     if (statusF) qs.set('status', statusF);
-    const data = await fetch(`${API_BASE}/api/analytics/arrivals/list?${qs.toString()}`).then(r=>r.json()).catch(()=>({items:[]}));
+    const data = await apiGET<any>(`/api/analytics/arrivals/list?${qs.toString()}`, true).catch(()=>({items:[]}));
     setDrillItems(Array.isArray(data?.items)? data.items : []);
     setDrillTitle(`Dolazci za ${month}`);
     setDrillOpen(true);
@@ -254,7 +458,7 @@ export default function AnalyticsArrivals() {
     if (statusF) qs.set('status', statusF);
     if (agentF) qs.set('agent', agentF);
     if (locationF) qs.set('location', locationF);
-    const data = await fetch(`${API_BASE}/api/analytics/arrivals/list?${qs.toString()}`).then(r=>r.json()).catch(()=>({items:[]}));
+    const data = await apiGET<any>(`/api/analytics/arrivals/list?${qs.toString()}`, true).catch(()=>({items:[]}));
     setDrillItems(Array.isArray(data?.items)? data.items : []);
     setDrillTitle(`Dolazci – ${supplier}`);
     setDrillOpen(true);
@@ -466,6 +670,36 @@ export default function AnalyticsArrivals() {
           </Card>
         </Col>
       </Row>
+
+      {breakdownSections.map((section) => (
+        <Row gutter={[16, 16]} key={section.key}>
+          <Col xs={24}>
+            <Card title={section.title}>
+              <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                <div style={{ width: '100%', height: 280 }}>
+                  <ReactECharts
+                    option={buildBreakdownChart(section.items, textColor, gridColor, section.color)}
+                    style={{ width: '100%', height: 280 }}
+                    notMerge
+                    lazyUpdate
+                    theme={dark ? 'dark' : undefined}
+                    echarts={echarts}
+                  />
+                </div>
+                <Table
+                  size="small"
+                  rowKey={(_, idx) => `${section.key}-${idx}`}
+                  pagination={{ pageSize: 6 }}
+                  loading={section.loading}
+                  dataSource={section.items}
+                  columns={makeBreakdownColumns(section.label)}
+                  locale={{ emptyText: 'Nema podataka za prikaz' }}
+                />
+              </Space>
+            </Card>
+          </Col>
+        </Row>
+      ))}
 
       {/* On‑time i Lead‑time KPI + buckets */}
       <Row gutter={[16,16]}>

@@ -74,7 +74,7 @@ export default function ArrivalsTable() {
   }, [load]);
 
   // CREATE
-  const handleCreate = async (payload: Partial<Arrival>) => {
+  const handleCreate = async (payload: Partial<Arrival> | Record<string, any>) => {
     setCreating(true);
     try {
       // mapiramo minimalni input za backend
@@ -110,11 +110,11 @@ export default function ArrivalsTable() {
   };
 
   // EDIT (PATCH)
-  const handleEdit = async (patch: Partial<Arrival>) => {
+  const handleEdit = async (patch: Partial<Arrival> | Record<string, any>) => {
     if (!editItem?.id) return;
     setSavingEdit(true);
     try {
-      await api.updateArrival(editItem.id as ID, patch);
+      await api.updateArrival(editItem.id as ID, patch as Partial<Arrival>);
       setEditItem(null);
       toast({
         title: "Sačuvano",
@@ -288,7 +288,7 @@ export default function ArrivalsTable() {
       <ArrivalFormDialog
         open={!!editItem}
         onOpenChange={(v) => !v && setEditItem(null)}
-        initial={editItem ?? {}}
+        initial={(editItem ?? {}) as any}
         onSubmit={handleEdit}
         submitting={savingEdit}
         title={`Uredi dolazak #${editItem?.id ?? ""}`}

@@ -118,7 +118,7 @@ async function httpJSON<T>(path: string, init?: RequestInit): Promise<T> {
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
-      ...(localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}),
+      ...(localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : ((): Record<string,string> => { alert('Potrebna je prijava'); throw new Error('AUTH_MISSING'); })()),
       ...(init?.headers || {}),
     },
   });

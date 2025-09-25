@@ -67,8 +67,8 @@ export function Sessions(props: any) {
   const [rows, setRows] = React.useState<any[]>([]);
   const load = async ()=> { try{ const list = await apiGET<any[]>(`/api/users/${user.id}/sessions`, true); setRows(list||[]);}catch{} };
   React.useEffect(()=>{ load(); }, [user?.id]);
-  async function revoke(id: number) { try{ await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/sessions/${id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${localStorage.getItem('token')}` } }); await load(); }catch{} }
-  async function revokeAll() { try{ await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/sessions`, { method:'DELETE', headers:{ Authorization:`Bearer ${localStorage.getItem('token')}` } }); await load(); }catch{} }
+  async function revoke(id: number) { const t=localStorage.getItem('token'); if(!t){alert('Potrebna je prijava'); return;} try{ await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/sessions/${id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${t}` } }); await load(); }catch{} }
+  async function revokeAll() { const t=localStorage.getItem('token'); if(!t){alert('Potrebna je prijava'); return;} try{ await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/sessions`, { method:'DELETE', headers:{ Authorization:`Bearer ${t}` } }); await load(); }catch{} }
   return (
     <div className="grid gap-2">
       <div className="flex justify-between items-center"><div className="font-medium">Aktivne sesije</div><Button onClick={revokeAll}>Revoke all</Button></div>
@@ -131,7 +131,7 @@ export function NotesFiles(props: any) {
     await apiPOST(`/api/users/${user.id}/notes`, { text }, { auth: true });
     setText(''); load();
   }
-  async function delNote(id: number) { await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/notes/${id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${localStorage.getItem('token')}` } }); load(); }
+  async function delNote(id: number) { const t=localStorage.getItem('token'); if(!t){alert('Potrebna je prijava'); return;} await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/notes/${id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${t}` } }); load(); }
   async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]; if (!f) return;
     const fd = new FormData(); fd.append('file', f);
@@ -139,7 +139,7 @@ export function NotesFiles(props: any) {
     e.currentTarget.value = '';
     load();
   }
-  async function delFile(id: number) { await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/files/${id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${localStorage.getItem('token')}` } }); load(); }
+  async function delFile(id: number) { const t=localStorage.getItem('token'); if(!t){alert('Potrebna je prijava'); return;} await fetch(`${import.meta.env.VITE_API_BASE?.replace(/\/$/,'') || 'http://localhost:8081'}/api/users/${user.id}/files/${id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${t}` } }); load(); }
   return (
     <div className="grid gap-4">
       <div>
@@ -177,4 +177,3 @@ export function NotesFiles(props: any) {
     </div>
   );
 }
-

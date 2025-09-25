@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Home, Package, FileText, Settings, ChevronLeft, ChevronRight } from "lucide-react";
+import { Home, Package, FileText, ChevronLeft, ChevronRight } from "lucide-react";
 
 export default function Sidebar() {
   // Start open on desktop, closed on small screens
@@ -64,7 +64,6 @@ export default function Sidebar() {
     { icon: Home, label: "Dolasci", to: "/arrivals", end: true },
     { icon: Package, label: "Kontejneri", to: "/containers" },
     { icon: FileText, label: "Izvještaji", to: "/reports" },
-    { icon: Settings, label: "Postavke", to: "/settings" },
   ];
 
   return (

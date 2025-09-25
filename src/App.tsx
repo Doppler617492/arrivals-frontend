@@ -11,8 +11,8 @@ import { apiGET, apiPOST, getToken, setToken, API_BASE } from "./api/client";
 import type { User } from "./types";
 import { useAuthStore } from "./store";
 import { useNotificationsStore } from "./store/notifications";
-import { Layout, Menu, Button, Input, Dropdown, Avatar, Badge, Drawer, Radio, Switch, Space, App as AntApp } from 'antd';
-import { AppstoreOutlined, UserOutlined, ContainerOutlined, SettingOutlined, MenuFoldOutlined, MenuUnfoldOutlined, BellOutlined, SearchOutlined, BulbOutlined, CarOutlined, MoreOutlined, DeleteOutlined, EyeOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Layout, Menu, Button, Input, Dropdown, Avatar, Badge, Drawer, Switch, App as AntApp } from 'antd';
+import { AppstoreOutlined, UserOutlined, ContainerOutlined, MenuFoldOutlined, MenuUnfoldOutlined, BellOutlined, SearchOutlined, CarOutlined, MoreOutlined, DeleteOutlined, EyeOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useUIStore } from "./store";
 import MuseDashboard from "./pages/MuseDashboard";
 import AnalyticsArrivals from "./pages/AnalyticsArrivals";
@@ -20,6 +20,7 @@ import AnalyticsContainers from "./pages/AnalyticsContainers";
 import VozilaPage from "./pages/Vozila";
 import AuthDebug from "./pages/AuthDebug";
 import SettingsPage from "./pages/Settings";
+import NotificationsPage from "./pages/Notifications";
 import "./index.css";
 import { initRealtime, realtime } from './lib/realtime';
 
@@ -34,6 +35,8 @@ function EnterpriseShell() {
   const setNotifList = useNotificationsStore((s)=> s.setList);
   const addNotif = useNotificationsStore((s)=> s.add);
   const markReadStore = useNotificationsStore((s)=> s.markRead);
+  const markManyStore = useNotificationsStore((s)=> s.markMany);
+  const removeNotif = useNotificationsStore((s)=> s.remove);
   const unreadCount = useNotificationsStore((s)=> s.unreadCount);
   const setUnreadCount = useNotificationsStore((s)=> s.setUnreadCount);
   const [notifUnreadOnly, setNotifUnreadOnly] = React.useState<boolean>(false);
@@ -54,6 +57,22 @@ function EnterpriseShell() {
         const d: any = evt.data;
         addNotif({ id: Number(d.id), text: String(d.text || ''), read: Boolean(d.read), created_at: d.created_at, navigate_url: d.navigate_url, entity_type: d.entity_type, entity_id: d.entity_id, type: d.type, event: d.event });
       }
+      if (evt.type === 'notifications.updated' && evt.data) {
+        const d: any = evt.data;
+        markReadStore(Number(d.id), Boolean(d.read));
+      }
+      if (evt.type === 'notifications.deleted' && evt.id) {
+        removeNotif(Number(evt.id));
+      }
+      if (evt.type === 'notifications.bulk') {
+        const data: any = evt;
+        if (data.action === 'ack' && Array.isArray(data.ids)) {
+          markManyStore(data.ids.map((id: number|string) => Number(id)), true);
+        }
+        if (data.action === 'deleted' && Array.isArray(data.ids)) {
+          data.ids.forEach((id: number|string) => removeNotif(Number(id)));
+        }
+      }
       if (evt.type === 'focus-arrival' && evt.id) {
         // Navigate to arrivals and focus by hash
         window.location.href = `/arrivals#${evt.id}`;
@@ -63,7 +82,7 @@ function EnterpriseShell() {
       }
     });
     return () => { try { off?.(); } catch {} };
-  }, []);
+  }, [addNotif, markManyStore, markReadStore, removeNotif, setUnreadCount]);
 
   // Close legacy dropdown on outside click and ESC (ignore Drawer clicks)
   React.useEffect(() => {
@@ -108,20 +127,6 @@ function EnterpriseShell() {
     else if (n.entity_type === 'arrival' && n.entity_id) window.location.href = `/arrivals#${n.entity_id}`;
   }
 
-  async function markAllAsRead() {
-    const ids = notifs.filter(n => !n.read).map(n => n.id);
-    if (!ids.length) { setNotifOpen(false); return; }
-    try { await apiPOST(`/api/notifications/ack`, { ids, read: true }, { auth: true }); } catch {}
-    try { setNotifList(notifs.map(n => ({ ...n, read: true }))); } catch {}
-    setNotifOpen(false);
-  }
-
-  async function deleteNotification(e: React.MouseEvent, n: { id:number; read?: boolean }) {
-    e.stopPropagation();
-    try { await fetch(`${API_BASE}/api/notifications/${n.id}`, { method: 'DELETE', headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${getToken() || ''}` }, credentials: 'include' as RequestCredentials }); } catch {}
-    try { setNotifList(notifs.filter(it => it.id !== n.id)); } catch {}
-  }
-
   function fmtTime(s?: string) {
     if (!s) return '';
     try { return new Date(s).toLocaleString('sr-RS', { timeZone: 'Europe/Podgorica' }); } catch { return s; }
@@ -131,8 +136,6 @@ function EnterpriseShell() {
   const themeColor = useUIStore(s => s.themeColor);
   const headerFixed = useUIStore(s => s.headerFixed);
   const headerTransparent = useUIStore(s => s.headerTransparent);
-  const darkMode = useUIStore(s => s.darkMode);
-  const setDarkMode = useUIStore(s => s.setDarkMode);
   const navigate = useNavigate();
   const location = useLocation();
   const siderColors: Record<string, string> = {
@@ -156,10 +159,6 @@ function EnterpriseShell() {
     { key: 'profile', label: 'Profil' },
     { key: 'logout', danger: true, label: 'Odjava', onClick: ()=> { setToken(null); try { setUserStore(null as any); } catch {} window.location.href = '/login'; } },
   ];
-  const setThemeColor = useUIStore(s => s.setThemeColor);
-  const setHeaderFixed = useUIStore(s => s.setHeaderFixed);
-  const setHeaderTransparent = useUIStore(s => s.setHeaderTransparent);
-  const [drawerOpen, setDrawerOpen] = React.useState(false);
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Layout.Sider className="um-sider" collapsible collapsed={!sidebarOpen} trigger={null} width={250} style={{ background: siderBg }}>
@@ -170,12 +169,12 @@ function EnterpriseShell() {
         <Menu className="um-sider-menu" theme="dark" mode="inline" selectedKeys={[location.pathname]} onClick={({ key }) => navigate(String(key))} items={[
           { key: '/dashboard', icon: <AppstoreOutlined />, label: 'Dashboard' },
           { key: '/arrivals', icon: <AppstoreOutlined />, label: 'Dolazci' },
-          { key: '/vozila', icon: <CarOutlined />, label: 'Vozila' },
           { key: '/containers', icon: <ContainerOutlined />, label: 'Kontejneri' },
           { key: '/analytics/arrivals', icon: <AppstoreOutlined />, label: 'Analitika (Dolazci)' },
           { key: '/analytics/containers', icon: <ContainerOutlined />, label: 'Analitika (Kontejneri)' },
           { key: '/users', icon: <UserOutlined />, label: 'Korisnici' },
-          { key: '/settings', icon: <SettingOutlined />, label: 'Postavke' },
+          { key: '/vozila', icon: <CarOutlined />, label: 'Vozila' },
+          { key: '/notifications', icon: <BellOutlined />, label: 'Notifikacije' },
         ]} />
       </Layout.Sider>
       <Layout>
@@ -184,10 +183,6 @@ function EnterpriseShell() {
           <div style={{ fontWeight: 600 }}>Arrivals</div>
           <div style={{ marginLeft: 'auto' }} />
           <Input prefix={<SearchOutlined />} placeholder="Pretraga" allowClear style={{ width: 280 }} />
-          <Space>
-            <span style={{opacity:.6,fontSize:12}}>Tema</span>
-            <Switch size="small" checkedChildren={<BulbOutlined />} unCheckedChildren={<BulbOutlined />} checked={darkMode} onChange={setDarkMode} />
-          </Space>
           <div style={{ position:'relative' }} ref={notifRef}>
             <Badge count={unreadCount} size="small" style={{ backgroundColor:'#ef4444' }}>
               <Button type="text" icon={<BellOutlined />} onClick={toggleNotif} />
@@ -215,7 +210,7 @@ function EnterpriseShell() {
             {/* Filters & global actions (sticky) */}
             <div style={{ position:'sticky', top:0, zIndex:1, background:'#fff', borderBottom:'1px solid #EAEAEA', padding:'10px 12px' }}>
               <div className="notif-inline" onClick={(e)=> e.stopPropagation()}>
-                <Switch className="notif-switch" size="small" checkedChildren="On" unCheckedChildren="Off" checked={notifUnreadOnly} onChange={async (checked)=>{
+                <Switch className="notif-switch" size="small" checkedChildren="On" unCheckedChildren="Off" checked={notifUnreadOnly} onChange={async (checked: boolean) => {
                   setNotifUnreadOnly(checked);
                   try {
                     const qs = new URLSearchParams();
@@ -262,14 +257,12 @@ function EnterpriseShell() {
                           if (key==='open') { if (n.navigate_url) window.location.href = n.navigate_url; else openNotification(n); return; }
                           if (key==='mark') {
                             try { await apiPOST(`/api/notifications/ack`, { ids:[n.id], read: !n.read }, { auth: true }); } catch {}
-                            try { setNotifList(notifs.map(x => x.id===n.id ? { ...x, read: !n.read } : x)); } catch {}
-                            setUnreadCount(Math.max(0, unreadCount + (n.read? 1 : -1)));
+                            markReadStore(n.id, !n.read);
                             return;
                           }
                           if (key==='delete') {
                             try { await fetch(`${API_BASE}/api/notifications/${n.id}`, { method:'DELETE', headers:{ 'Accept':'application/json', 'Authorization': `Bearer ${getToken() || ''}` }, credentials:'include' as RequestCredentials }); } catch {}
-                            try { setNotifList(notifs.filter(x => x.id !== n.id)); } catch {}
-                            setUnreadCount(Math.max(0, unreadCount - (n.read? 0 : 1)));
+                            removeNotif(n.id);
                             return;
                           }
                         } }}
@@ -286,20 +279,20 @@ function EnterpriseShell() {
             <div style={{ padding: '10px 12px', display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, background:'#fafafa', borderTop:'1px solid #f1f5f9' }}>
               <div style={{ display:'flex', gap:10 }}>
                 <Button
-                  className="notif-danger-btn"
                   danger
                   type="primary"
                   size="small"
+                  style={{ backgroundColor: '#dc2626', borderColor: '#dc2626', color: '#fff' }}
                   onClick={()=>{
                     modal.confirm({
                       title: 'Izbriši sve obavijesti?',
                       content: 'Ova radnja je nepovratna.',
                       okText: 'Izbriši sve',
                       okType: 'danger',
+                      okButtonProps: { danger: true, type: 'primary', style: { backgroundColor: '#dc2626', borderColor: '#dc2626' } },
                       cancelText: 'Odustani',
                       onOk: async ()=> {
                         try { await apiPOST(`/api/notifications/bulk_delete`, { unread: notifUnreadOnly }, { auth: true }); } catch {}
-                        try { localStorage.removeItem('arrivals_notifications'); } catch {}
                         try {
                           const qs = new URLSearchParams();
                           if (notifUnreadOnly) qs.set('unread','1');
@@ -307,6 +300,7 @@ function EnterpriseShell() {
                           const list = await apiGET<any[]>(`/api/notifications${qs.toString()?`?${qs.toString()}`:''}`, true);
                           setNotifList((list || []).map((n:any) => ({ id: Number(n.id), text: String(n.text || ''), read: Boolean(n.read), created_at: n.created_at, navigate_url: n.navigate_url, entity_type: n.entity_type, entity_id: n.entity_id, type: n.type, event: n.event })));
                         } catch {}
+                        markManyStore([], true);
                         setUnreadCount(0);
                       }
                     });
@@ -316,11 +310,10 @@ function EnterpriseShell() {
                 </Button>
               </div>
               <div style={{ display:'flex', gap:10 }}>
-                <Button size="small" onClick={()=> { window.location.href = '/notifications'; }}>Prikaži sve</Button>
+                <Button size="small" onClick={()=> { setNotifOpen(false); navigate('/notifications'); }}>Prikaži sve</Button>
               </div>
             </div>
           </Drawer>
-          <Button type="text" icon={<SettingOutlined />} onClick={()=> setDrawerOpen(true)} />
           <Dropdown menu={{ items: userMenuItems }} trigger={["click"]}>
             <Avatar style={{ background:'#3f5ae0', cursor:'pointer' }} size="small">A</Avatar>
           </Dropdown>
@@ -330,6 +323,7 @@ function EnterpriseShell() {
             <Route path="/dashboard" element={<MuseDashboard />} />
             <Route path="/arrivals" element={<ArrivalsCards />} />
             <Route path="/containers" element={<ContainersPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/vozila" element={<VozilaPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/admin/auth-debug" element={<AuthDebug />} />
@@ -340,35 +334,6 @@ function EnterpriseShell() {
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </Layout.Content>
-        <Drawer
-          title="Appearance"
-          placement="right"
-          width={300}
-          open={drawerOpen}
-          onClose={()=> setDrawerOpen(false)}
-        >
-          <Space direction="vertical" size="large" style={{ width: '100%' }}>
-            <div>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>Theme color</div>
-              <Radio.Group value={themeColor} onChange={(e)=> setThemeColor(e.target.value)}>
-                <Space direction="vertical">
-                  <Radio value="blue">Blue</Radio>
-                  <Radio value="green">Green</Radio>
-                  <Radio value="red">Red</Radio>
-                  <Radio value="yellow">Yellow</Radio>
-                  <Radio value="black">Black</Radio>
-                </Space>
-              </Radio.Group>
-            </div>
-            <div>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>Header</div>
-              <Space direction="vertical">
-                <div><Switch checked={headerFixed} onChange={setHeaderFixed} /> <span style={{ marginLeft: 8 }}>Fixed</span></div>
-                <div><Switch checked={headerTransparent} onChange={setHeaderTransparent} /> <span style={{ marginLeft: 8 }}>Transparent</span></div>
-              </Space>
-            </div>
-          </Space>
-        </Drawer>
       </Layout>
     </Layout>
   );

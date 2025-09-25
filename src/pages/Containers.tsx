@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import React from "react";
 import { Card, Button, Select, DatePicker, Input, Space, InputNumber, Switch, Modal, Pagination } from "antd";
+import { FolderOpenOutlined, UploadOutlined, DeleteOutlined } from "@ant-design/icons";
 import dayjs, { Dayjs } from "dayjs";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
@@ -33,6 +34,13 @@ type Container = {
 /* =========================
    Config
 ========================= */
+const STATUS_OPTIONS = [
+  { value: 'pending', label: 'Najavljeno' },
+  { value: 'shipped', label: 'U transportu' },
+  { value: 'arrived', label: 'Stiglo' },
+  { value: 'delivered', label: 'Isporučeno' },
+] as const;
+
 const API_BASE: string = ((import.meta as any)?.env?.VITE_API_BASE || "http://localhost:8081").replace(/\/$/, "");
 
 type FileMeta = {
@@ -55,9 +63,16 @@ function useToken() {
   }, []);
   return t;
 }
-function authHeaders(): Record<string, string> {
+function authHeaders(required: boolean = false): Record<string, string> {
   const t = localStorage.getItem("token");
-  return t ? { Authorization: `Bearer ${t}` } : {};
+  if (!t) {
+    if (required) {
+      alert("Potrebna je prijava");
+      throw new Error("AUTH_MISSING");
+    }
+    return {};
+  }
+  return { Authorization: `Bearer ${t}` };
 }
 async function patchContainer(id: number, payload: Record<string, any>) {
   const res = await fetch(`${API_BASE}/api/containers/${id}`, {
@@ -66,7 +81,7 @@ async function patchContainer(id: number, payload: Record<string, any>) {
       "Content-Type": "application/json",
       Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
       // some backends are picky with Accept header when body can be empty
-      ...authHeaders(),
+      ...authHeaders(true),
     },
     body: JSON.stringify(payload),
   });
@@ -116,7 +131,7 @@ async function updateContainerWithFallbacks(id: number, payload: Record<string, 
   let lastErr: any = null;
   for (const t of tries) {
     try {
-      const headers: Record<string, string> = { Accept: "application/json,text/plain;q=0.9,*/*;q=0.8", ...authHeaders() };
+      const headers: Record<string, string> = { Accept: "application/json,text/plain;q=0.9,*/*;q=0.8", ...authHeaders(true) };
       let body: any;
       if (t.type === "json") {
         headers["Content-Type"] = "application/json";
@@ -201,8 +216,6 @@ function fmtCurrency(v?: number | string | null) {
   // Format parts in EU style, then place symbol in front: $ 12.345,67
   const nf = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'USD' });
   const parts = nf.formatToParts(n);
-  const number = parts.filter(p => p.type !== 'currency' && p.type !== 'literal')
-                      .map(p => p.value).join('');
   // Rebuild number including locale literals (group, decimal)
   const numberWithLiterals = parts.filter(p => p.type !== 'currency').map(p => p.value).join('');
   // Safari may already include non‑breaking space before symbol; normalize by removing symbol and trimming
@@ -258,11 +271,17 @@ function EditableCell({
   max?: number;
 }) {
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState<any>(row[field] ?? (type === "number" ? 0 : ""));
+  const normalize = (input: any) => {
+    if (input === null || input === undefined) return type === "number" ? 0 : "";
+    if (typeof input === "number" && Number.isNaN(input)) return type === "number" ? 0 : "";
+    if (typeof input === "string" && input.trim().toLowerCase() === "nan") return "";
+    return input;
+  };
+  const [value, setValue] = useState<any>(normalize(row[field]));
   const inputRef = useRef<any>(null);
 
   useEffect(() => {
-    setValue(row[field] ?? (type === "number" ? 0 : ""));
+    setValue(normalize(row[field]));
   }, [row[field]]);
 
   useEffect(() => {
@@ -294,8 +313,18 @@ function EditableCell({
 
   if (!editing) {
     let display: any = row[field] ?? "";
+    if (typeof display === "number" && Number.isNaN(display)) display = "";
+    if (typeof display === "string" && display.trim().toLowerCase() === "nan") display = "";
     if (type === "date") display = toEU(String(display));
-    if (isCurrency) display = fmtCurrency(Number(display || 0));
+    if (isCurrency) {
+      if (display === "" || display === null) {
+        display = "";
+      } else {
+        const numeric = Number(display);
+        display = Number.isFinite(numeric) ? fmtCurrency(numeric) : "";
+      }
+    }
+    if (typeof display === "number" && Number.isNaN(display)) display = "";
 
     // status badge coloring for all statuses
     let badgeClass = "ghost";
@@ -409,7 +438,26 @@ export default function ContainersPage() {
   const [filterFrom, setFilterFrom] = useState<string>(""); // ISO date
   const [filterTo, setFilterTo] = useState<string>("");     // ISO date
   const [filterDateField, setFilterDateField] = useState<"eta" | "etd" | "delivery">("eta");
-  const [sortBy, setSortBy] = useState<"id" | "supplier" | "eta" | "etd" | "total" | "balance" | "paid" | "status">("eta");
+  type SortField =
+    | "id"
+    | "supplier"
+    | "proforma_no"
+    | "etd"
+    | "delivery"
+    | "eta"
+    | "cargo_qty"
+    | "cargo"
+    | "container_no"
+    | "roba"
+    | "contain_price"
+    | "agent"
+    | "total"
+    | "deposit"
+    | "balance"
+    | "paid"
+    | "status";
+
+  const [sortBy, setSortBy] = useState<SortField>("eta");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   // ---- column visibility (persisted) ----
@@ -466,13 +514,61 @@ export default function ContainersPage() {
   // Column order save function removed with UI
   // Drag & drop column ordering UI removed
 
+  const sortableColumnMap: Partial<Record<ColKey, SortField>> = {
+    supplier: 'supplier',
+    proforma_no: 'proforma_no',
+    etd: 'etd',
+    delivery: 'delivery',
+    eta: 'eta',
+    cargo_qty: 'cargo_qty',
+    cargo: 'cargo',
+    container_no: 'container_no',
+    roba: 'roba',
+    contain_price: 'contain_price',
+    agent: 'agent',
+    total: 'total',
+    deposit: 'deposit',
+    balance: 'balance',
+    status: 'status',
+    paid: 'paid',
+  };
+
+  const handleHeaderSort = (k: ColKey) => {
+    const field = sortableColumnMap[k];
+    if (!field) return;
+    setSortBy((prevField) => {
+      setSortDir((prevDir) => {
+        if (prevField === field) {
+          return prevDir === 'asc' ? 'desc' : 'asc';
+        }
+        return 'asc';
+      });
+      return field;
+    });
+  };
+
   // Render helpers (header/new-row/row cells)
   function renderHeaderCell(k: ColKey) {
     const labels: Record<ColKey, string> = {
       supplier:'Dobavljač', proforma_no:'Proforma', etd:'ETD', delivery:'Delivery', eta:'ETA', cargo_qty:'Qty', cargo:'Tip', container_no:'Kontejner', roba:'Roba', contain_price:'Cijena', agent:'Agent', total:'Total', deposit:'Depozit', balance:'Balans', status:'Status', paid:'Plaćanje', actions:'Akcije'
     } as any;
     const align = (k==='cargo_qty' || k==='contain_price' || k==='total' || k==='deposit' || k==='balance') ? 'al-right' : (k==='proforma_no' || k==='etd' || k==='delivery' || k==='eta' || k==='paid' || k==='status') ? 'al-center' : 'al-left';
-    return <th key={`h-${k}`} className={align}>{labels[k]}</th>;
+    const extraClass = k==='paid' ? ' payment-column' : k==='actions' ? ' actions-column' : '';
+    const sortField = sortableColumnMap[k];
+    if (!sortField) {
+      return <th key={`h-${k}`} className={`${align}${extraClass}`}>{labels[k]}</th>;
+    }
+    const isSorted = sortBy === sortField;
+    const indicator = isSorted ? (sortDir === 'asc' ? '▲' : '▼') : '⇅';
+    const ariaSort = isSorted ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none';
+    return (
+      <th key={`h-${k}`} className={`${align} table-sortable${extraClass}`} aria-sort={ariaSort}>
+        <button type="button" className={`table-sort-button${isSorted ? ' is-active' : ''}`} onClick={() => handleHeaderSort(k)}>
+          <span>{labels[k]}</span>
+          <span className="table-sort-icon" aria-hidden>{indicator}</span>
+        </button>
+      </th>
+    );
   }
   function renderNewRowCell(k: ColKey) {
     switch (k) {
@@ -484,7 +580,7 @@ export default function ContainersPage() {
         );
       case 'proforma_no':
         return (
-          <td key={`n-${k}`} className="al-center">
+          <td key={`n-${k}`} className="al-center payment-cell">
             <Input size="small" value={newRow.proforma_no || ""} onChange={(e) => setNewRow((s) => ({ ...s, proforma_no: e.target.value }))} style={{ textAlign: 'center' }} />
           </td>
         );
@@ -594,16 +690,21 @@ export default function ContainersPage() {
         );
       case 'paid':
         return (
-          <td key={`n-${k}`} className="al-center">
-            <Switch
-              size="small"
-              checked={!!newRow.paid}
-              onChange={(checked) => setNewRow((s) => ({ ...s, paid: !!checked }))}
-              checkedChildren="Plaćeno"
-              unCheckedChildren="Nije plaćeno"
-            />
+          <td key={`n-${k}`} className="payment-cell">
+            <div className="payment-cell-inner">
+              <span className={`payment-label ${newRow.paid ? 'payment-label--paid' : 'payment-label--unpaid'}`}>
+                {newRow.paid ? 'Plaćeno' : 'Nije plaćeno'}
+              </span>
+              <Switch
+                size="small"
+                className="table-switch"
+                checked={!!newRow.paid}
+                onChange={(checked) => setNewRow((s) => ({ ...s, paid: !!checked }))}
+              />
+            </div>
           </td>
         );
+
       case 'status':
         return (
           <td key={`n-${k}`} className="al-center">
@@ -612,20 +713,15 @@ export default function ContainersPage() {
               value={newRow.status || 'pending'}
               onChange={(v)=> setNewRow((s)=> ({ ...s, status: String(v) }))}
               style={{ width: 140 }}
-              options={[
-                { value:'pending', label:'Pending' },
-                { value:'shipped', label:'Shipped' },
-                { value:'arrived', label:'Arrived' },
-                { value:'delivered', label:'Delivered' },
-              ]}
+              options={STATUS_OPTIONS as any}
             />
           </td>
         );
       case 'actions':
         return (
-          <td key={`n-${k}`} className="actions-cell" style={{ whiteSpace: 'nowrap' }}>
+          <td key={`n-${k}`} className="actions-cell actions-column" style={{ whiteSpace: 'nowrap' }}>
             <input type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt" style={{ display: 'none' }} ref={newFileInputRef} onChange={(e)=> onPickNewFiles(e.target.files)} />
-            <Space size="small">
+            <Space size={12} wrap className="table-action-group">
               <Button size="small" onClick={()=> newFileInputRef.current?.click()}>
                 Dodaj fajlove
               </Button>
@@ -657,19 +753,15 @@ export default function ContainersPage() {
         <td key={`c-${k}-${r.id}`} className="al-center">
           <Select
             size="small"
+            className="table-status-select"
             value={(r.status || 'pending') as any}
             onChange={async (v)=> {
               const next = String(v);
               setRows(prev => prev.map(x => x.id===r.id ? { ...x, status: next } : x));
               try { await updateContainerWithFallbacks(r.id, { status: next }); await qc.invalidateQueries({ queryKey: ['containers'] }); } catch (e) { /* rollback simplistic */ }
             }}
-            style={{ width: 140 }}
-            options={[
-              { value:'pending', label:'Pending' },
-              { value:'shipped', label:'Shipped' },
-              { value:'arrived', label:'Arrived' },
-              { value:'delivered', label:'Delivered' },
-            ]}
+            style={{ width: 150 }}
+            options={STATUS_OPTIONS as any}
           />
         </td>
       );
@@ -692,27 +784,55 @@ export default function ContainersPage() {
           }}
         />
       );
-      case 'paid': return (
-        <td key={`c-${k}-${r.id}`} className="al-right" style={{ textAlign: 'right' }}>
-          <Switch
-            size="small"
-            checked={!!r.paid}
-            loading={!!toggling[r.id]}
-            onChange={() => togglePaid(r)}
-            checkedChildren="Plaćeno"
-            unCheckedChildren="Nije plaćeno"
-          />
-        </td>
-      );
+      case 'paid': {
+        const isPaid = !!r.paid;
+        return (
+          <td key={`c-${k}-${r.id}`} className="payment-cell">
+            <div className="payment-cell-inner">
+              <span className={`payment-label ${isPaid ? 'payment-label--paid' : 'payment-label--unpaid'}`}>
+                {isPaid ? 'Plaćeno' : 'Nije plaćeno'}
+              </span>
+              <Switch
+                size="small"
+                className="table-switch"
+                checked={isPaid}
+                loading={!!toggling[r.id]}
+                onChange={() => togglePaid(r)}
+              />
+            </div>
+          </td>
+        );
+      }
       case 'actions': return (
-        <td key={`c-${k}-${r.id}`} className="actions-cell" style={{whiteSpace: 'nowrap'}}>
+        <td key={`c-${k}-${r.id}`} className="actions-cell actions-column" style={{whiteSpace: 'nowrap'}}>
           <input type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt" style={{ display: 'none' }} ref={(el) => { fileInputsRef.current[r.id] = el; }} onChange={(e) => uploadFiles(r.id, e.target.files)} />
-          <Space size="small">
-            <Button size="small" onClick={() => listFiles(r.id)}>Fajlovi</Button>
-            <Button size="small" onClick={() => fileInputsRef.current[r.id]?.click()}>Upload</Button>
-            <Button size="small" danger onClick={() => onDelete(r.id)}>Obriši</Button>
-          </Space>
-        </td>
+          <Space size={12} wrap className="table-action-group">
+            <Button
+              size="small"
+              className="table-action-btn"
+              icon={<FolderOpenOutlined />}
+              onClick={() => listFiles(r.id)}
+            >
+              Fajlovi
+            </Button>
+            <Button
+              size="small"
+              className="table-action-btn table-action-btn--upload"
+              icon={<UploadOutlined />}
+              onClick={() => fileInputsRef.current[r.id]?.click()}
+            >
+              Upload
+            </Button>
+            <Button
+              size="small"
+              className="table-action-btn table-action-btn--danger"
+              icon={<DeleteOutlined />}
+              onClick={() => onDelete(r.id)}
+            >
+              Obriši
+            </Button>
+         </Space>
+       </td>
       );
     }
   }
@@ -822,6 +942,7 @@ export default function ContainersPage() {
       case 'total': return 'total';
       case 'balance': return 'balance';
       case 'paid': return 'status';
+      case 'status': return 'status';
       default: return 'created_at';
     }
   })();
@@ -906,9 +1027,18 @@ export default function ContainersPage() {
       switch (sortBy) {
         case "id": aa = toNum(a.id); bb = toNum(b.id); break;
         case "supplier": aa = toStr(a.supplier); bb = toStr(b.supplier); break;
+        case "proforma_no": aa = toStr(a.proforma_no); bb = toStr(b.proforma_no); break;
         case "eta": aa = String(a.eta || ""); bb = String(b.eta || ""); break;
         case "etd": aa = String(a.etd || ""); bb = String(b.etd || ""); break;
+        case "delivery": aa = String(a.delivery || ""); bb = String(b.delivery || ""); break;
+        case "cargo_qty": aa = toNum(a.cargo_qty); bb = toNum(b.cargo_qty); break;
+        case "cargo": aa = toStr(a.cargo); bb = toStr(b.cargo); break;
+        case "container_no": aa = toStr(a.container_no); bb = toStr(b.container_no); break;
+        case "roba": aa = toStr(a.roba); bb = toStr(b.roba); break;
+        case "contain_price": aa = parseMoney(a.contain_price); bb = parseMoney(b.contain_price); break;
+        case "agent": aa = toStr(a.agent); bb = toStr(b.agent); break;
         case "total": aa = parseMoney(a.total); bb = parseMoney(b.total); break;
+        case "deposit": aa = parseMoney(a.deposit); bb = parseMoney(b.deposit); break;
         case "balance": aa = parseMoney(a.balance); bb = parseMoney(b.balance); break;
         case "paid": aa = a.paid ? 1 : 0; bb = b.paid ? 1 : 0; break;
         case "status": aa = toStr((a as any).status); bb = toStr((b as any).status); break;
@@ -961,12 +1091,30 @@ export default function ContainersPage() {
     setPreviewUrl(null);
     setPreviewName(null);
     try {
-      const res = await fetch(`${API_BASE}/api/containers/${containerId}/files`, {
-        method: "GET",
-        headers: { Accept: "application/json", ...authHeaders() },
-      });
-      if (!res.ok) throw new Error(`List files failed: ${res.status}`);
-      const data = await res.json();
+      const headersJson = { Accept: "application/json", ...authHeaders(true) } as Record<string,string>;
+      const headersForm = { ...headersJson, "Content-Type": "application/json" } as Record<string,string>;
+      // Try a series of common patterns to list files
+      const tries: Array<() => Promise<Response>> = [
+        // GET base
+        () => fetch(`${API_BASE}/api/containers/${containerId}/files`, { method: 'GET', headers: headersJson }),
+        // GET with trailing slash
+        () => fetch(`${API_BASE}/api/containers/${containerId}/files/`, { method: 'GET', headers: headersJson }),
+        // GET with explicit list=1
+        () => fetch(`${API_BASE}/api/containers/${containerId}/files?list=1`, { method: 'GET', headers: headersJson }),
+        // POST list endpoint (JSON)
+        () => fetch(`${API_BASE}/api/containers/${containerId}/files/list`, { method: 'POST', headers: headersForm, body: JSON.stringify({}) }),
+        // POST on base to request list (JSON)
+        () => fetch(`${API_BASE}/api/containers/${containerId}/files`, { method: 'POST', headers: headersForm, body: JSON.stringify({ action: 'list' }) }),
+      ];
+      let res: Response | null = null;
+      for (const fn of tries) {
+        try {
+          res = await fn();
+          if (res.ok) break;
+        } catch {}
+      }
+      if (!res || !res.ok) throw new Error(`List files failed: ${res ? res.status : 'no-response'}`);
+      const data = await res.json().catch(()=>({ files: [] }));
       const raw: any[] = Array.isArray(data) ? data : data.files || [];
       const items: FileMeta[] = raw.map((it: any) => ({
         id: Number(it.id),
@@ -991,7 +1139,7 @@ export default function ContainersPage() {
     try {
       const res = await fetch(`${API_BASE}/api/containers/${containerId}/files`, {
         method: "POST",
-        headers: { ...authHeaders() }, // NE stavljati Content-Type uz FormData
+        headers: { ...authHeaders(true) }, // NE stavljati Content-Type uz FormData
         body: fd,
       });
       if (!res.ok) {
@@ -1013,7 +1161,7 @@ export default function ContainersPage() {
     try {
       const res = await fetch(
         `${API_BASE}/api/containers/${containerId}/files/${fileId}`,
-        { method: "DELETE", headers: { ...authHeaders() } }
+        { method: "DELETE", headers: { ...authHeaders(true) } }
       );
       if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
       await listFiles(containerId);
@@ -1856,32 +2004,6 @@ export default function ContainersPage() {
               <DatePicker
                 value={filterTo ? dayjs(filterTo) : null}
                 onChange={(d: Dayjs | null) => setFilterTo(d ? d.format("YYYY-MM-DD") : "")}
-              />
-
-              <span aria-hidden title="Sortiraj">↕️</span>
-              <span style={{ fontSize: 12, opacity: 0.8 }}>Sortiraj po</span>
-              <Select
-                style={{ width: 160 }}
-                value={sortBy}
-                onChange={(v) => setSortBy(v as any)}
-                options={[
-                  { label: "ETA", value: "eta" },
-                  { label: "ETD", value: "etd" },
-                  { label: "Total", value: "total" },
-                  { label: "Balans", value: "balance" },
-                  { label: "Dobavljač", value: "supplier" },
-                  { label: "Plaćanje", value: "paid" },
-                  { label: "#", value: "id" },
-                ]}
-              />
-              <Select
-                style={{ width: 140 }}
-                value={sortDir}
-                onChange={(v) => setSortDir(v as any)}
-                options={[
-                  { label: "Rastuće", value: "asc" },
-                  { label: "Opadajuće", value: "desc" },
-                ]}
               />
 
               <Button

@@ -20,6 +20,9 @@
     "src/pages/Analytics.tsx",
     "src/pages/Arrivals.tsx",
     "src/pages/ContainersGrid.tsx",
-    "src/pages/NewArrivalPage.tsx"
+    "src/pages/NewArrivalPage.tsx",
+    "src/App.backup.tsx",
+    "src/pages/UsersPage.parts.tsx",
+    "src/test"
   ]
 }

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { API_BASE } from "../../api/client";
 
 type Profile = {
   fullName: string;
@@ -25,7 +26,7 @@ function buildHeaders(json = true): HeadersInit {
 
 async function apiGet<T>(url: string): Promise<ApiResult<T>> {
   try {
-    const res = await fetch(url, { headers: buildHeaders(false), credentials: "include" as RequestCredentials });
+    const res = await fetch(`${API_BASE}${url}`, { headers: buildHeaders(false), credentials: "include" as RequestCredentials });
     if (!res.ok) return { ok: false, error: `${res.status} ${res.statusText}` };
     const data = await res.json();
     return { ok: true, data };
@@ -36,7 +37,7 @@ async function apiGet<T>(url: string): Promise<ApiResult<T>> {
 
 async function apiPatch<T>(url: string, body: any): Promise<ApiResult<T>> {
   try {
-    const res = await fetch(url, {
+    const res = await fetch(`${API_BASE}${url}`, {
       method: "PATCH",
       headers: buildHeaders(true),
       credentials: "include" as RequestCredentials,
@@ -55,7 +56,7 @@ async function apiPatch<T>(url: string, body: any): Promise<ApiResult<T>> {
 
 async function apiPost<T>(url: string, body: any): Promise<ApiResult<T>> {
   try {
-    const res = await fetch(url, {
+    const res = await fetch(`${API_BASE}${url}`, {
       method: "POST",
       headers: buildHeaders(true),
       credentials: "include" as RequestCredentials,

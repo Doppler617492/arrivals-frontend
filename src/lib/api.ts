@@ -491,7 +491,6 @@ export const api = {
     } catch {
       // fallback demo data
       return [
-        { id: 1, text: "Nova pošiljka je stigla (CN-123)", read: false },
         { id: 2, text: "Dug je plaćen (INV-4578)", read: false },
         { id: 3, text: "ETA promijenjen za CN-987", read: true },
       ];
