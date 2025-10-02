@@ -2,9 +2,26 @@ import React from 'react';
 import { Card, Row, Col, Space, Tag, Button, Input, Select, DatePicker, Modal, Form, message, Empty, InputNumber, Popconfirm, Popover, List } from 'antd';
 import dayjs from 'dayjs';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CarOutlined, CalendarOutlined, EnvironmentOutlined, UserOutlined, IdcardOutlined, FileTextOutlined, DollarCircleOutlined, AuditOutlined, PaperClipOutlined, SearchOutlined, TagsOutlined } from '@ant-design/icons';
+import { CarOutlined, CalendarOutlined, EnvironmentOutlined, UserOutlined, IdcardOutlined, FileTextOutlined, DollarCircleOutlined, AuditOutlined, PaperClipOutlined, SearchOutlined, TagsOutlined, FlagOutlined } from '@ant-design/icons';
 import { apiGET, apiPOST, apiPATCH, apiDELETE, qs, API_BASE, getToken } from '../api/client';
 import { exportCSV as exportCSVUtil } from '../utils/exports';
+import { EUROPEAN_COUNTRIES, EUROPEAN_COUNTRY_NAME_MAP, isoToFlag } from '../lib/countries';
+
+type SupplierOption = {
+  id: number;
+  name: string;
+  default_currency?: string;
+  is_active?: boolean;
+};
+
+type ArrivalSupplierEntry = {
+  supplier_id: number;
+  supplier_name?: string;
+  supplier?: SupplierOption | null;
+  value?: number | null;
+  currency?: string | null;
+  note?: string | null;
+};
 
 type Arrival = {
   id: number;
@@ -25,6 +42,12 @@ type Arrival = {
   note?: string;
   responsible?: string;
   category?: string;
+  currency?: string;
+  country?: string | null;
+  countries?: string[];
+  countries_verbose?: { code: string; name: string }[];
+  suppliers?: ArrivalSupplierEntry[];
+  suppliers_value_total?: number | null;
 };
 
 // Options (replicate prior dataset)
@@ -85,6 +108,9 @@ export default function ArrivalsCards() {
   const [open, setOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Arrival | null>(null);
   const [form] = Form.useForm<Arrival>();
+  const [selectedSupplierIds, setSelectedSupplierIds] = React.useState<number[]>([]);
+  const [newSupplierName, setNewSupplierName] = React.useState<string>('');
+  const [creatingSupplier, setCreatingSupplier] = React.useState<boolean>(false);
   // Files modal state
   const [filesModalId, setFilesModalId] = React.useState<number | null>(null);
   const [filesList, setFilesList] = React.useState<Array<{ id:number; filename:string; url?:string; created_at?:string }>>([]);
@@ -103,6 +129,210 @@ export default function ArrivalsCards() {
   const [selectedView, setSelectedView] = React.useState<string>('');
 
   const qc = useQueryClient();
+  const { data: supplierOptionsData, isLoading: supplierOptionsLoading } = useQuery({
+    queryKey: ['suppliers', 'options'],
+    queryFn: async () => {
+      const res = await apiGET<any[]>('/api/suppliers?limit=500', true).catch(() => []);
+      if (!Array.isArray(res)) return [];
+      return res
+        .map((item) => ({
+          id: Number(item?.id),
+          name: String(item?.name || ''),
+          default_currency: String(item?.default_currency || 'EUR'),
+          is_active: Boolean(item?.is_active ?? true),
+        }))
+        .filter((opt) => Number.isFinite(opt.id) && opt.name);
+    },
+    staleTime: 300_000,
+  });
+  const supplierOptions: SupplierOption[] = React.useMemo(
+    () => (Array.isArray(supplierOptionsData) ? supplierOptionsData : []),
+    [supplierOptionsData],
+  );
+  const supplierOptionMap = React.useMemo(() => {
+    const map = new Map<number, SupplierOption>();
+    supplierOptions.forEach((opt) => {
+      if (Number.isFinite(opt.id)) map.set(opt.id, opt);
+    });
+    return map;
+  }, [supplierOptions]);
+  const normalizeArrivalResponse = React.useCallback((raw: any, categoryOverride?: string): Arrival => {
+    const supplierEntries: ArrivalSupplierEntry[] = Array.isArray(raw?.suppliers)
+      ? raw.suppliers
+          .map((link: any) => {
+            const supplierId = Number(link?.supplier_id || link?.supplier?.id);
+            if (!Number.isFinite(supplierId) || supplierId <= 0) return null;
+            const option = supplierOptionMap.get(supplierId);
+            const supplierName = link?.supplier_name || link?.supplier?.name || option?.name || `Dobavljač #${supplierId}`;
+            const value = typeof link?.value === 'number'
+              ? link.value
+              : typeof link?.goods_value === 'number'
+                ? link.goods_value
+                : undefined;
+            const currency = String(link?.currency || option?.default_currency || 'EUR').toUpperCase();
+            return {
+              supplier_id: supplierId,
+              supplier_name: supplierName,
+              supplier: option || link?.supplier || null,
+              value: typeof value === 'number' ? value : undefined,
+              currency,
+              note: link?.note || null,
+            } as ArrivalSupplierEntry;
+          })
+          .filter(Boolean) as ArrivalSupplierEntry[]
+      : [];
+    const suppliersTotal = supplierEntries.reduce((sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0), 0);
+    const categoryValue = categoryOverride !== undefined ? categoryOverride : normalizeCategory(raw?.category || '');
+    let countriesList: string[] = [];
+    if (Array.isArray(raw?.countries)) {
+        countriesList = raw.countries.map((code: any) => String(code || '').toUpperCase()).filter(Boolean);
+    } else if (Array.isArray(raw?.countries_verbose)) {
+        countriesList = raw.countries_verbose
+          .map((item: any) => String(item?.code || '').toUpperCase())
+          .filter(Boolean);
+    }
+    if (!countriesList.length && raw?.country) {
+        countriesList = [String(raw.country).toUpperCase()];
+    }
+    const countriesVerbose = Array.isArray(raw?.countries_verbose)
+      ? raw.countries_verbose.map((item: any) => ({
+          code: String(item?.code || '').toUpperCase(),
+          name: String(item?.name || EUROPEAN_COUNTRY_NAME_MAP[String(item?.code || '').toUpperCase()] || '').trim() || undefined,
+        }))
+      : countriesList.map((code) => ({ code, name: EUROPEAN_COUNTRY_NAME_MAP[code] || code }));
+    const primaryCountry = countriesList.length ? countriesList[0] : (raw?.country ? String(raw.country).toUpperCase() : '');
+    return {
+      ...raw,
+      id: Number(raw?.id),
+      supplier: raw?.supplier || '',
+      status: normalizeStatus(raw?.status),
+      category: categoryValue,
+      country: primaryCountry,
+      countries: countriesList,
+      countries_verbose: countriesVerbose,
+      suppliers: supplierEntries,
+      suppliers_value_total: supplierEntries.length ? suppliersTotal : (typeof raw?.suppliers_value_total === 'number' ? raw.suppliers_value_total : undefined),
+    } as Arrival;
+  }, [supplierOptionMap]);
+  const formatMoney = React.useCallback((value?: number | null, currency: string = 'EUR') => {
+    if (typeof value !== 'number' || Number.isNaN(value)) return undefined;
+    try {
+      return new Intl.NumberFormat('en-GB', { style: 'currency', currency }).format(value);
+    } catch {
+      return `${currency} ${value.toFixed(2)}`;
+    }
+  }, []);
+  const updateSupplierSelection = React.useCallback((ids: number[], extras?: Record<number, SupplierOption>) => {
+    const normalizedIds = Array.from(new Set(ids.filter((id) => Number.isFinite(id) && id > 0))).map((id) => Number(id));
+    const current: ArrivalSupplierEntry[] = form.getFieldValue('suppliers') || [];
+    const currentMap = new Map<number, ArrivalSupplierEntry>(
+      current.map((entry) => [Number(entry?.supplier_id), entry]),
+    );
+    const nextList: ArrivalSupplierEntry[] = normalizedIds.map((id) => {
+      const existing = currentMap.get(id);
+      const option = extras?.[id] || supplierOptionMap.get(id);
+      const supplierName = existing?.supplier_name || option?.name || existing?.supplier?.name || `Dobavljač #${id}`;
+      return {
+        supplier_id: id,
+        supplier_name: supplierName,
+        supplier: option || existing?.supplier || null,
+        value: typeof existing?.value === 'number' ? existing.value : undefined,
+        currency: (existing?.currency || option?.default_currency || 'EUR').toUpperCase(),
+        note: existing?.note || '',
+      };
+    });
+    setSelectedSupplierIds(normalizedIds);
+    const total = nextList.reduce((sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0), 0);
+    form.setFieldsValue({ suppliers: nextList, goods_cost: nextList.length ? total : undefined });
+  }, [form, supplierOptionMap]);
+  const handleSupplierSelectChange = React.useCallback((values: (number | string)[] | undefined) => {
+    const arrayValues = Array.isArray(values) ? values : [];
+    const ids = arrayValues
+      .map((val) => Number(val))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    updateSupplierSelection(ids);
+  }, [updateSupplierSelection]);
+  const removeSupplier = React.useCallback((id: number) => {
+    updateSupplierSelection(selectedSupplierIds.filter((sid) => sid !== id));
+  }, [updateSupplierSelection, selectedSupplierIds]);
+  const handleCreateSupplier = React.useCallback(async (value?: string) => {
+    const nameRaw = typeof value === 'string' ? value : newSupplierName;
+    const trimmed = nameRaw.trim();
+    if (!trimmed) {
+      message.warning('Unesite naziv dobavljača');
+      return;
+    }
+    if (creatingSupplier) return;
+    setCreatingSupplier(true);
+    try {
+      let created;
+      try {
+        created = await apiPOST<any>('/api/suppliers', { name: trimmed, default_currency: 'EUR' }, { auth: true });
+      } catch (primaryErr: any) {
+        const raw = String(primaryErr?.message || '');
+        if (/405/.test(raw) || /method not allowed/i.test(raw)) {
+          created = await apiPOST<any>('/api/suppliers/create', { name: trimmed, default_currency: 'EUR' }, { auth: true });
+        } else {
+          throw primaryErr;
+        }
+      }
+      if (!created || typeof created.id !== 'number') {
+        throw new Error('Dobavljač nije vraćen iz servera');
+      }
+      const supplierPayload: SupplierOption = {
+        id: Number(created.id),
+        name: String(created.name || trimmed),
+        default_currency: String(created.default_currency || 'EUR'),
+        is_active: Boolean(created.is_active ?? true),
+      };
+      qc.setQueryData(['suppliers', 'options'], (prev: any) => {
+        const arr = Array.isArray(prev) ? [...prev] : [];
+        if (!arr.some((item: any) => Number(item?.id) === supplierPayload.id)) {
+          arr.push(supplierPayload);
+        }
+        return arr;
+      });
+      updateSupplierSelection([...selectedSupplierIds, supplierPayload.id], { [supplierPayload.id]: supplierPayload });
+      setNewSupplierName('');
+      message.success('Dobavljač je dodat');
+    } catch (err: any) {
+      const raw = String(err?.message || 'Dodavanje dobavljača nije uspjelo');
+      const pretty = raw.includes('-') ? raw.split('-').slice(1).join('-').trim() : raw;
+      message.error(pretty || 'Dodavanje dobavljača nije uspjelo');
+    } finally {
+      setCreatingSupplier(false);
+    }
+  }, [creatingSupplier, newSupplierName, qc, selectedSupplierIds, updateSupplierSelection]);
+  const supplierFormEntries: ArrivalSupplierEntry[] = (form.getFieldValue('suppliers') as ArrivalSupplierEntry[]) || [];
+  const supplierSelectOptions = React.useMemo(() => {
+    const options = supplierOptions.map((opt) => ({ value: opt.id, label: opt.name }));
+    supplierFormEntries.forEach((entry) => {
+      const id = Number(entry?.supplier_id);
+      if (!Number.isFinite(id) || id <= 0) return;
+      if (options.some((opt) => opt.value === id)) return;
+      const name = entry?.supplier_name || entry?.supplier?.name || `Dobavljač #${id}`;
+      options.push({ value: id, label: name });
+    });
+    return options.sort((a, b) => String(a.label).localeCompare(String(b.label), 'sr'));
+  }, [supplierOptions, supplierFormEntries]);
+  const countryOptions = React.useMemo(
+    () => EUROPEAN_COUNTRIES.map((country) => ({
+      value: country.code,
+      label: `${isoToFlag(country.code)} ${country.name}`,
+      search: `${country.code} ${country.name}`,
+    })),
+    [],
+  );
+  const handleValuesChange = React.useCallback((_: any, allValues: any) => {
+    const list: ArrivalSupplierEntry[] = Array.isArray(allValues?.suppliers) ? allValues.suppliers : [];
+    const total = list.reduce((sum, entry) => sum + (typeof entry?.value === 'number' ? entry.value : 0), 0);
+    const normalized = list.length ? total : undefined;
+    const current = form.getFieldValue('goods_cost');
+    const currentNormalized = typeof current === 'number' ? current : undefined;
+    if ((normalized ?? undefined) !== (currentNormalized ?? undefined)) {
+      form.setFieldsValue({ goods_cost: normalized });
+    }
+  }, [form]);
   // Focus/highlight on hash (#ID) navigation
   React.useEffect(() => {
     function focusFromHash() {
@@ -142,19 +372,13 @@ export default function ArrivalsCards() {
         const id = Number(a.id);
         const fromLocal = localMap[String(id)] || '';
         const cat = normalizeCategory(a.category || fromLocal || '');
-        // Migrate typo in local storage if present
         if (fromLocal && fromLocal !== cat) {
           try {
             localMap[String(id)] = cat;
             localStorage.setItem('arrivals_category_map', JSON.stringify(localMap));
           } catch {}
         }
-        return {
-          ...a,
-          id,
-          status: normalizeStatus(a.status),
-          category: cat,
-        } as Arrival;
+        return normalizeArrivalResponse(a, cat);
       });
       return out as Arrival[];
     },
@@ -164,6 +388,13 @@ export default function ArrivalsCards() {
   React.useEffect(() => {
     if (Array.isArray(data)) setRows(data);
   }, [data]);
+
+  React.useEffect(() => {
+    if (!open) {
+      setSelectedSupplierIds([]);
+      setNewSupplierName('');
+    }
+  }, [open]);
 
   const [searchValue, setSearchValue] = React.useState('');
   React.useEffect(() => { const t = setTimeout(() => setQ(searchValue), 400); return () => clearTimeout(t); }, [searchValue]);
@@ -187,7 +418,18 @@ export default function ArrivalsCards() {
       if (categoryF && (r.category || '').toLowerCase() !== categoryF.toLowerCase()) return false as any;
       if (!inRange(r.eta)) return false as any;
       if (!qq) return true;
-      const hay = [r.id, r.supplier, r.carrier, r.plate, r.driver, r.location, r.category].filter(Boolean).join(' ').toLowerCase();
+      const supplierTokens = Array.isArray((r as any).suppliers)
+        ? ((r as any).suppliers as ArrivalSupplierEntry[])
+            .map((s) => s?.supplier_name || s?.supplier?.name || '')
+            .filter(Boolean)
+        : [];
+      const countryTokens = Array.isArray((r as any).countries)
+        ? ((r as any).countries as string[]).filter(Boolean)
+        : (r.country ? [r.country] : []);
+      const hay = [r.id, r.supplier, ...supplierTokens, ...countryTokens, r.carrier, r.plate, r.driver, r.location, r.category]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
       return hay.includes(qq);
     });
   }, [rows, q, status, locationF, responsibleF, categoryF, dateFrom, dateTo]);
@@ -343,6 +585,9 @@ export default function ArrivalsCards() {
   function onAdd() {
     setEditing(null);
     form.resetFields();
+    form.setFieldsValue({ suppliers: [], countries: [], goods_cost: undefined });
+    setSelectedSupplierIds([]);
+    setNewSupplierName('');
     setOpen(true);
   }
   function onEdit(r: Arrival) {
@@ -350,7 +595,32 @@ export default function ArrivalsCards() {
     const values: any = { ...r };
     if (r.eta) values.eta = dayjs(r.eta);
     if (r.pickup_date) values.pickup_date = dayjs(r.pickup_date);
+    const supplierLinks = Array.isArray(r.suppliers) ? r.suppliers : [];
+    const normalizedSuppliers = supplierLinks
+      .map((link) => {
+        const supplierId = Number(link?.supplier_id);
+        if (!Number.isFinite(supplierId) || supplierId <= 0) return null;
+        const option = supplierOptionMap.get(supplierId);
+        return {
+          supplier_id: supplierId,
+          supplier_name: link?.supplier_name || link?.supplier?.name || option?.name || `Dobavljač #${supplierId}`,
+          supplier: option || link?.supplier || null,
+          value: typeof link?.value === 'number' ? link.value : undefined,
+          currency: (link?.currency || option?.default_currency || 'EUR').toUpperCase(),
+          note: link?.note || '',
+        } as ArrivalSupplierEntry;
+      })
+      .filter(Boolean) as ArrivalSupplierEntry[];
+    values.suppliers = normalizedSuppliers;
+    const countryList = Array.isArray(r.countries) && r.countries.length
+      ? r.countries
+      : (r.country ? [r.country] : []);
+    values.countries = countryList.map((code) => String(code || '').toUpperCase());
+    const totalSuppliers = normalizedSuppliers.reduce((sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0), 0);
+    values.goods_cost = normalizedSuppliers.length ? totalSuppliers : (typeof r.goods_cost === 'number' ? r.goods_cost : undefined);
     form.setFieldsValue(values);
+    setSelectedSupplierIds(normalizedSuppliers.map((item) => item.supplier_id));
+    setNewSupplierName('');
     setOpen(true);
   }
   async function onDelete(r: Arrival) {
@@ -414,20 +684,59 @@ export default function ArrivalsCards() {
         freight_cost: typeof v.freight_cost === 'number' ? v.freight_cost : undefined,
         goods_cost: typeof v.goods_cost === 'number' ? v.goods_cost : undefined,
       };
+      const countries = Array.isArray(v.countries)
+        ? v.countries.map((code: any) => String(code || '').toUpperCase()).filter((code: string) => !!code)
+        : v.country
+          ? [String(v.country).toUpperCase()].filter(code => !!code)
+          : [];
+      payload.countries = countries;
+      payload.country = countries.length ? countries[0] : null;
+      if (Array.isArray(v.suppliers)) {
+        payload.suppliers = v.suppliers
+          .map((entry: any) => {
+            const supplierId = Number(entry?.supplier_id);
+            if (!Number.isFinite(supplierId) || supplierId <= 0) return null;
+            const cleanNote = typeof entry?.note === 'string' ? entry.note.trim() : undefined;
+            return {
+              supplier_id: supplierId,
+              value: typeof entry?.value === 'number' ? entry.value : undefined,
+              currency: (entry?.currency || 'EUR').toUpperCase(),
+              note: cleanNote || undefined,
+            };
+          })
+          .filter(Boolean);
+        if (!payload.supplier && v.suppliers.length) {
+          const joined = v.suppliers
+            .map((item: any) => item?.supplier_name)
+            .filter(Boolean)
+            .join(', ');
+          if (joined) payload.supplier = joined;
+        }
+      } else {
+        payload.suppliers = [];
+      }
       if (editing) {
         const resp = await apiPATCH<any>(`/api/arrivals/${editing.id}`, payload, true);
-        // ensure local category cache aligns immediately
+        const normalized = normalizeArrivalResponse(resp);
+        setRows(prev => prev.map(r => r.id === editing.id ? { ...normalized, files_count: (r as any).files_count ?? 0 } : r));
         const cat = String(payload.category || resp?.category || '').trim();
         if (cat) setLocalCategory(Number(editing.id), cat);
         message.success('Sačuvano');
       } else {
         const created = await apiPOST<any>('/api/arrivals', payload, { auth: true });
-        const newId = Number(created?.id);
-        const cat = String(payload.category || created?.category || '').trim();
+        const normalized = normalizeArrivalResponse(created);
+        const newId = Number(normalized?.id);
+        const cat = String(payload.category || normalized?.category || '').trim();
         if (Number.isFinite(newId) && cat) setLocalCategory(newId, cat);
+        setRows(prev => [{ ...normalized, files_count: 0 }, ...prev]);
         message.success('Kreirano');
       }
-      setOpen(false); qc.invalidateQueries({ queryKey: ['arrivals'] });
+      setEditing(null);
+      setSelectedSupplierIds([]);
+      setNewSupplierName('');
+      setOpen(false);
+      form.resetFields();
+      qc.invalidateQueries({ queryKey: ['arrivals'] });
     } catch {}
   }
 
@@ -654,7 +963,8 @@ export default function ArrivalsCards() {
           const header = key === 'not_shipped' ? 'Najavljeno' : key === 'shipped' ? 'U transportu' : 'Stiglo';
           const color = key === 'not_shipped' ? '#1677ff' : key === 'shipped' ? '#ff4d4f' : '#55aa55';
           const dropHandlers = makeDropHandlers(key);
-          const fmtEUR = (n: any) => typeof n === 'number' ? n.toLocaleString('en-GB', { style:'currency', currency:'EUR' }) : '-';
+          const moneyLabel = (value?: number | null, currency?: string | null) =>
+            formatMoney(value, (currency || 'EUR').toUpperCase()) || '-';
           return (
             <Col xs={24} md={8} key={key}>
               <div style={{ border:'1px solid #eee', borderRadius: 8, overflow:'hidden', minHeight: 200, background:'#fff' }} {...dropHandlers}>
@@ -667,6 +977,39 @@ export default function ArrivalsCards() {
                     <Empty description="" image={Empty.PRESENTED_IMAGE_SIMPLE} />
                   ) : groups[key].map((r) => {
                     const s = normalizeStatus(r.status);
+                    const supplierLinks: ArrivalSupplierEntry[] = Array.isArray((r as any).suppliers)
+                      ? ((r as any).suppliers as ArrivalSupplierEntry[])
+                      : [];
+                    const supplierBadges = supplierLinks
+                      .map((link) => {
+                        const label = link?.supplier_name || link?.supplier?.name || `#${link?.supplier_id}`;
+                        const formatted = moneyLabel(link?.value, link?.currency);
+                        return label ? `${label}${formatted && formatted !== '-' ? ` (${formatted})` : ''}` : null;
+                      })
+                      .filter(Boolean) as string[];
+                    const extraSuppliers = Math.max(0, supplierBadges.length - 3);
+                    const supplierDisplay = supplierBadges.length
+                      ? supplierBadges.slice(0, 3).join(' · ')
+                      : (r.supplier || '-');
+                    const countryCodes = Array.isArray((r as any).countries) && ((r as any).countries as string[]).length
+                      ? ((r as any).countries as string[])
+                      : (r.country ? [r.country] : []);
+                    const countryBadges = countryCodes
+                      .map((code) => {
+                        const codeUpper = String(code || '').toUpperCase();
+                        if (!codeUpper) return null;
+                        return `${isoToFlag(codeUpper)} ${EUROPEAN_COUNTRY_NAME_MAP[codeUpper] || codeUpper}`.trim();
+                      })
+                      .filter(Boolean) as string[];
+                    const extraCountries = Math.max(0, countryBadges.length - 3);
+                    const countryDisplay = countryBadges.length
+                      ? `${countryBadges.slice(0, 3).join(' · ')}${extraCountries > 0 ? ` · +${extraCountries}` : ''}`
+                      : '—';
+                    const suppliersTotal = supplierLinks.reduce((sum, link) => sum + (typeof link.value === 'number' ? link.value : 0), 0);
+                    const hasSupplierValues = supplierLinks.length > 0;
+                    const goodsValue = hasSupplierValues
+                      ? suppliersTotal
+                      : (typeof r.suppliers_value_total === 'number' ? r.suppliers_value_total : (r as any).goods_cost);
                     return (
                       <Card
                         key={r.id}
@@ -701,13 +1044,20 @@ export default function ArrivalsCards() {
                       >
                         <Space direction="vertical" size={6} style={{ width: '100%' }}>
                           <div style={{ display:'flex', justifyContent:'space-between', gap:8 }}>
-                            <div><FileTextOutlined style={{ marginRight: 6 }} /><strong>Dobavljač:</strong> {r.supplier || '-'}</div>
+                            <div style={{ flex: 1 }}>
+                              <FileTextOutlined style={{ marginRight: 6 }} />
+                              <strong>Dobavljači:</strong> {supplierDisplay}
+                              {extraSuppliers > 0 ? ` · +${extraSuppliers}` : ''}
+                            </div>
                             <div><CalendarOutlined style={{ marginRight: 6 }} /><strong>ETA:</strong> {r.eta ? new Date(r.eta).toLocaleDateString() : '-'}</div>
                           </div>
                           <div style={{ display:'flex', justifyContent:'space-between', gap:8 }}>
+                            <div><FlagOutlined style={{ marginRight: 6 }} /><strong>Zemlja:</strong> {countryDisplay}</div>
                             <div><EnvironmentOutlined style={{ marginRight: 6 }} /><strong>Lokacija:</strong> {r.location || '-'}</div>
-                            <div><UserOutlined style={{ marginRight: 6 }} /><strong>Odgovorna:</strong> {r.responsible || '-'}</div>
                           </div>
+                          <div style={{ display:'flex', justifyContent:'space-between', gap:8 }}>
+                            <div><UserOutlined style={{ marginRight: 6 }} /><strong>Odgovorna:</strong> {r.responsible || '-'}</div>
+                            </div>
                           <div style={{ display:'flex', justifyContent:'space-between', gap:8 }}>
                             <div><TagsOutlined style={{ marginRight: 6 }} /><strong>Kategorija:</strong> {r.category ? <Tag color="#0ea5e9">{r.category}</Tag> : '-'}</div>
                           </div>
@@ -716,8 +1066,8 @@ export default function ArrivalsCards() {
                             <div><CalendarOutlined style={{ marginRight: 6 }} /><strong>Pickup:</strong> {r.pickup_date ? new Date(r.pickup_date).toLocaleDateString() : '-'}</div>
                           </div>
                           <div style={{ display:'flex', justifyContent:'space-between', gap:8 }}>
-                            <div><DollarCircleOutlined style={{ marginRight: 6 }} /><strong>Roba:</strong> {fmtEUR((r as any).goods_cost)}</div>
-                            <div><DollarCircleOutlined style={{ marginRight: 6 }} /><strong>Prevoz:</strong> {fmtEUR((r as any).freight_cost)}</div>
+                            <div><DollarCircleOutlined style={{ marginRight: 6 }} /><strong>Roba:</strong> {moneyLabel(goodsValue, (r as any).currency)}</div>
+                            <div><DollarCircleOutlined style={{ marginRight: 6 }} /><strong>Prevoz:</strong> {moneyLabel((r as any).freight_cost, (r as any).currency)}</div>
                           </div>
                         </Space>
                         <div style={{ marginTop: 8, display:'flex', justifyContent:'space-between', gap:8, flexWrap:'wrap' }}>
@@ -749,12 +1099,84 @@ export default function ArrivalsCards() {
         })}
       </Row>
 
-      <Modal open={open} onCancel={()=> setOpen(false)} onOk={onSubmit} title={editing? `Uredi #${editing.id}` : 'Novi dolazak'} destroyOnHidden>
-        <Form form={form} className="arrivals-form" layout="vertical" size="small" preserve={false} initialValues={{ status:'not_shipped', type:'truck' }}>
-          {/* Redosled: Dobavljač, Status, Pickup, ETA, Lokacija, Odgovorna, Prevoznik, Cijena robe, Cijena prevoza */}
-          <Form.Item name="supplier" label="Dobavljač" rules={[{ required: true, message: 'Obavezno' }]}>
-            <Input />
+      <Modal open={open} onCancel={()=> { setOpen(false); setEditing(null); form.resetFields(); }} onOk={onSubmit} title={editing? `Uredi #${editing.id}` : 'Novi dolazak'} destroyOnHidden>
+        <Form
+          form={form}
+          className="arrivals-form"
+          layout="vertical"
+          size="small"
+          preserve={false}
+          initialValues={{ status:'not_shipped', type:'truck', suppliers: [], countries: [] }}
+          onValuesChange={handleValuesChange}
+        >
+          {/* Dobavljači i zemlja porijekla */}
+          <Form.Item name="countries" label="Zemlja (porijeklo)">
+            <Select
+              mode="multiple"
+              allowClear
+              showSearch
+              placeholder="Odaberite jednu ili više zemalja"
+              optionFilterProp="search"
+              options={countryOptions}
+              maxTagCount="responsive"
+            />
           </Form.Item>
+          <Form.Item label="Dobavljači">
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Select
+                mode="multiple"
+                allowClear
+                placeholder="Odaberite dobavljače"
+                value={selectedSupplierIds}
+                options={supplierSelectOptions}
+                loading={supplierOptionsLoading}
+                onChange={(values) => handleSupplierSelectChange(values as (number | string)[])}
+                optionFilterProp="label"
+                showSearch
+              />
+              <Input.Search
+                placeholder="Dodaj novog dobavljača"
+                value={newSupplierName}
+                onChange={(e) => setNewSupplierName(e.target.value)}
+                onSearch={(value) => handleCreateSupplier(value)}
+                enterButton="Dodaj"
+                loading={creatingSupplier}
+                disabled={creatingSupplier}
+              />
+            </Space>
+          </Form.Item>
+          {supplierFormEntries.length === 0 ? (
+            <div style={{ marginBottom: 12, color: '#64748b', fontSize: 12 }}>
+              Dodajte jednog ili više dobavljača (ili unesite novog iznad) da popunite vrijednost robe i bilješke.
+            </div>
+          ) : supplierFormEntries.map((entry, idx) => {
+              const supplierName = entry?.supplier_name || entry?.supplier?.name || supplierOptionMap.get(entry.supplier_id)?.name || `Dobavljač #${entry.supplier_id}`;
+              return (
+                <div key={`supplier-${entry.supplier_id}-${idx}`} style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <span style={{ fontWeight: 600 }}>{supplierName}</span>
+                    <Button type="link" danger onClick={() => removeSupplier(entry.supplier_id)}>Ukloni</Button>
+                  </div>
+                  <Space style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                    <Form.Item name={['suppliers', idx, 'value']} label="Vrijednost robe" style={{ flex: '1 1 180px' }}>
+                      <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item name={['suppliers', idx, 'currency']} label="Valuta" style={{ width: 140 }}>
+                      <Select options={[{ value: 'EUR', label: 'EUR' }]} />
+                    </Form.Item>
+                  </Space>
+                  <Form.Item name={['suppliers', idx, 'note']} label="Napomena">
+                    <Input.TextArea rows={2} />
+                  </Form.Item>
+                  <Form.Item name={['suppliers', idx, 'supplier_id']} hidden>
+                    <Input type="hidden" />
+                  </Form.Item>
+                  <Form.Item name={['suppliers', idx, 'supplier_name']} hidden>
+                    <Input type="hidden" />
+                  </Form.Item>
+                </div>
+              );
+            })}
           <Form.Item name="status" label="Status" rules={[{ required: true }]}>
             <Select options={[{ value: 'not_shipped', label: 'Najavljeno' },{ value: 'shipped', label: 'U transportu' },{ value: 'arrived', label: 'Stiglo' }]} />
           </Form.Item>
@@ -774,11 +1196,11 @@ export default function ArrivalsCards() {
             <Select allowClear showSearch options={RESPONSIBLE_OPTIONS.map(v=> ({ value: v, label: v }))} />
           </Form.Item>
           <Form.Item name="carrier" label="Prevoznik"><Input /></Form.Item>
-          <Form.Item name="goods_cost" label="Cijena robe">
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} prefix="€" />
+          <Form.Item name="goods_cost" label="Cijena robe (auto)">
+            <InputNumber min={0} step={0.01} style={{ width: '100%' }} disabled readOnly />
           </Form.Item>
           <Form.Item name="freight_cost" label="Cijena prevoza">
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} prefix="€" />
+            <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
           </Form.Item>
           {/* Sekundarna polja */}
           <Form.Item name="type" label="Tip">

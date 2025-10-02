@@ -5,6 +5,24 @@ export type ArrivalSearchResponse = { items: Arrival[]; total: number; page: num
 
 export type User = { id: number; email: string; name: string; role: string };
 
+export type SupplierRef = {
+  id: number;
+  name: string;
+  default_currency?: string;
+  is_active?: boolean;
+};
+
+export type ArrivalSupplierLink = {
+  id?: number;
+  arrival_id?: number;
+  supplier_id: number;
+  supplier?: SupplierRef | null;
+  supplier_name?: string;
+  value?: number | null;
+  currency?: string | null;
+  note?: string | null;
+};
+
 export type Arrival = {
   id: number;
   supplier: string;
@@ -19,6 +37,11 @@ export type Arrival = {
   status: "not shipped" | "shipped" | "arrived";
   note: string | null;
   created_at: string;
+  country?: string | null;
+  countries?: string[];
+  countries_verbose?: { code: string; name: string }[];
+  suppliers?: ArrivalSupplierLink[];
+  suppliers_value_total?: number | null;
 };
 
 export type Update = {

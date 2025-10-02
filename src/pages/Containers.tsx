@@ -1360,28 +1360,40 @@ export default function ContainersPage() {
       if (cols.length === 0) continue;
 
       const pick = (i: number) => (i >= 0 && i < cols.length ? cols[i] : "");
-      const toNum = (v: any) => {
-        if (v === null || v === undefined || v === "") return 0;
-        if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+      const toNum = (v: any, fallback = 0) => {
+        if (v === null || v === undefined || v === "") return fallback;
+        if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
         // Remove currency symbols and any non-numeric except separators
         const s0 = String(v).trim().replace(/[^0-9,.-\s]/g, "");
         // If both separators exist, assume EU style ('.' thousands, ',' decimal)
         if (s0.includes(".") && s0.includes(",")) {
           const s = s0.replace(/\./g, "").replace(/,/g, ".");
           const n = Number(s);
-          return Number.isFinite(n) ? n : 0;
+          return Number.isFinite(n) ? n : fallback;
         }
         // If only comma exists, treat comma as decimal separator
         if (s0.includes(",") && !s0.includes(".")) {
           const s = s0.replace(/\s/g, "").replace(/,/g, ".");
           const n = Number(s);
-          return Number.isFinite(n) ? n : 0;
+          return Number.isFinite(n) ? n : fallback;
         }
         // Default: plain Number after removing thin spaces
         const n = Number(s0.replace(/\s/g, ""));
-        return Number.isFinite(n) ? n : 0;
+        return Number.isFinite(n) ? n : fallback;
       };
       const truthy = (v: any) => isTruthy(v);
+
+      const interpretQty = (raw: any) => {
+        const txt = String(raw ?? "").trim();
+        if (!txt) return { qty: 0, cargoType: "" };
+        const match = txt.match(/(\d+[\d.,]*)\s*[xX]\s*([0-9A-Za-z\- ]+)/);
+        if (match) {
+          const qty = toNum(match[1], 0);
+          const cargoType = match[2].trim();
+          return { qty, cargoType };
+        }
+        return { qty: toNum(raw, 0), cargoType: "" };
+      };
 
       // Normalize EU date formats to ISO
       const normDate = (v: string) => {
@@ -1394,18 +1406,10 @@ export default function ContainersPage() {
 
       const proforma_no = pick(idx.proforma);
       const container_no = pick(idx.container);
-      const qty = toNum(pick(idx.qty));
-      // Handle combined patterns like "1 x 40HQ" in CARGO QTY
-      let qtyParsed = qty;
-      let cargoTypeFromQty = "";
       const rawQtyCell = pick(idx.qty);
-      if ((!qtyParsed || qtyParsed === 0) && rawQtyCell) {
-        const m = String(rawQtyCell).match(/(\d+)\s*[xX]\s*([0-9A-Za-z\-]+)/);
-        if (m) {
-          qtyParsed = Number(m[1]);
-          cargoTypeFromQty = m[2];
-        }
-      }
+      const interpretedQty = interpretQty(rawQtyCell);
+      let qtyParsed = interpretedQty.qty;
+      let cargoTypeFromQty = interpretedQty.cargoType;
       // Fallback: detect container number anywhere in the row if column missing
       let container_no_detected = container_no;
       if (!container_no_detected) {
@@ -1416,7 +1420,7 @@ export default function ContainersPage() {
 
       // Handle Cijena (EUR): blank -> '0,00', otherwise keep original text
       const rawCijena = pick(idx.contain_price);
-      const containPrice = String(rawCijena ?? '').trim() === '' ? '0,00' : String(rawCijena);
+      const containPriceValue = toNum(rawCijena, 0);
 
       const payload: any = {
         supplier: pick(idx.supplier),
@@ -1437,8 +1441,9 @@ export default function ContainersPage() {
         containerno: container_no_detected,
         containerNum: container_no_detected,
         roba: pick(idx.roba),
-        contain_price: containPrice,
-        price: containPrice, // extra alias
+        contain_price: containPriceValue || null,
+        container_price: containPriceValue || null,
+        price: containPriceValue || null, // extra alias
         agent: pick(idx.agent),
         total: toNum(pick(idx.total)),
         deposit: toNum(pick(idx.deposit)),
@@ -1452,6 +1457,11 @@ export default function ContainersPage() {
             return { paid: isPaid };
           })() ),
       };
+
+      payload.status = payload.paid ? 'paid' : 'unpaid';
+      payload.cargo_qty = qtyParsed || null;
+      if (cargoTypeFromQty && !payload.type) payload.type = cargoTypeFromQty;
+      if (!payload.type && rawQtyCell) payload.type = String(rawQtyCell).trim();
 
       try {
         // 1) Create the container
@@ -2134,20 +2144,23 @@ export default function ContainersPage() {
                 </tr>
               )}
 
-              {pagedRows.map((r) => (
-                <tr key={r.id}>
-                  <td className="al-center">
-                    <input
-                      type="checkbox"
-                      aria-label={`Selektuj red ${r.id}`}
-                      checked={isSelected(r.id)}
-                      onChange={() => toggleSelect(r.id)}
-                    />
-                  </td>
-                  <td className="al-center">{r.id}</td>
-                  {colOrder.filter(isColVisible).map(k => renderRowCell(k, r))}
-                </tr>
-              ))}
+              {pagedRows.map((r, idx) => {
+                const ordinal = (page - 1) * pageSize + idx;
+                return (
+                  <tr key={r.id}>
+                    <td className="al-center">
+                      <input
+                        type="checkbox"
+                        aria-label={`Selektuj red ${r.id}`}
+                        checked={isSelected(r.id)}
+                        onChange={() => toggleSelect(r.id)}
+                      />
+                    </td>
+                    <td className="al-center">{ordinal}</td>
+                    {colOrder.filter(isColVisible).map(k => renderRowCell(k, r))}
+                  </tr>
+                );
+              })}
             </tbody>
 
             <tfoot>
