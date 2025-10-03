@@ -211,17 +211,11 @@ const parseMoney = (v: any): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-function fmtCurrency(v?: number | string | null) {
-  const n = parseMoney(v);
-  // Format parts in EU style, then place symbol in front: $ 12.345,67
-  const nf = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'USD' });
-  const parts = nf.formatToParts(n);
-  // Rebuild number including locale literals (group, decimal)
-  const numberWithLiterals = parts.filter(p => p.type !== 'currency').map(p => p.value).join('');
-  // Safari may already include non‑breaking space before symbol; normalize by removing symbol and trimming
-  const cleaned = numberWithLiterals.replace(/\s*\$/g, '').trim();
-  return `$ ${cleaned}`;
-}
+const fmtCurrency = (v?: number | string | null): string =>
+  new Intl.NumberFormat('de-DE', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(parseMoney(v));
 const sumBy = (rows: Container[], key: keyof Container) =>
   rows.reduce((acc, r) => acc + parseMoney(r[key] as any), 0);
 
