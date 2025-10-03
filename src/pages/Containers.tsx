@@ -250,6 +250,7 @@ function EditableCell({
   isCurrency = false,
   options,
   onSave,
+  sticky,
   align,
   min,
   max,
@@ -260,6 +261,7 @@ function EditableCell({
   isCurrency?: boolean;
   options?: string[]; // for select/status
   onSave: (value: any) => Promise<void> | void;
+  sticky?: "selector" | "ordinal" | "actions";
   align?: "left" | "right" | "center";
   min?: number;
   max?: number;
@@ -308,7 +310,11 @@ function EditableCell({
   // AntD inputs commit on blur/Enter; Escape handling is omitted for simplicity.
 
   const baseStyle: React.CSSProperties = { textAlign: align || (isCurrency ? "right" : undefined) };
-  const tdClassName = alignToClass(align || (isCurrency ? "right" : "left"));
+  const tdClassName = [
+    alignToClass(align || (isCurrency ? "right" : "left")),
+    sticky ? `sticky-col ${sticky}` : '',
+    isCurrency ? 'currency-cell' : '',
+  ].filter(Boolean).join(' ');
 
   if (!editing) {
     let display: any = row[field] ?? "";
@@ -401,6 +407,7 @@ export default function ContainersPage() {
   // upload refs
   const fileInputsRef = useRef<Record<number, HTMLInputElement | null>>({});
   const newFileInputRef = useRef<HTMLInputElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [newFiles, setNewFiles] = useState<File[]>([]);
 
@@ -550,8 +557,8 @@ export default function ContainersPage() {
     const labels: Record<ColKey, string> = {
       supplier:'Dobavljač', proforma_no:'Proforma', etd:'ETD', delivery:'Delivery', eta:'ETA', cargo_qty:'Qty', cargo:'Tip', container_no:'Kontejner', roba:'Roba', contain_price:'Cijena', agent:'Agent', total:'Total', deposit:'Depozit', balance:'Balans', status:'Status', paid:'Plaćanje', actions:'Akcije'
     } as any;
-    const align = (k==='cargo_qty' || k==='contain_price' || k==='total' || k==='deposit' || k==='balance') ? 'al-right' : (k==='proforma_no' || k==='etd' || k==='delivery' || k==='eta' || k==='paid' || k==='status') ? 'al-center' : 'al-left';
-    const extraClass = k==='paid' ? ' payment-column' : k==='actions' ? ' actions-column' : '';
+    const align = (k==='cargo_qty' || k==='contain_price' || k==='total' || k==='deposit' || k==='balance') ? 'al-right' : (k==='proforma_no' || k==='etd' || k==='delivery' || k==='eta' || k==='paid' || k==='status' || k==='actions') ? 'al-center' : 'al-left';
+    const extraClass = k==='paid' ? ' payment-column' : k==='actions' ? ' actions-column sticky-col actions' : '';
     const sortField = sortableColumnMap[k];
     if (!sortField) {
       return <th key={`h-${k}`} className={`${align}${extraClass}`}>{labels[k]}</th>;
@@ -717,7 +724,7 @@ export default function ContainersPage() {
         );
       case 'actions':
         return (
-          <td key={`n-${k}`} className="actions-cell actions-column" style={{ whiteSpace: 'nowrap' }}>
+          <td key={`n-${k}`} className="actions-cell actions-column sticky-col actions" style={{ whiteSpace: 'nowrap' }}>
             <input type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt" style={{ display: 'none' }} ref={newFileInputRef} onChange={(e)=> onPickNewFiles(e.target.files)} />
             <Space size={12} wrap className="table-action-group">
               <Button size="small" onClick={()=> newFileInputRef.current?.click()}>
@@ -802,7 +809,7 @@ export default function ContainersPage() {
         );
       }
       case 'actions': return (
-        <td key={`c-${k}-${r.id}`} className="actions-cell actions-column" style={{whiteSpace: 'nowrap'}}>
+        <td key={`c-${k}-${r.id}`} className="actions-cell actions-column sticky-col actions" style={{whiteSpace: 'nowrap'}}>
           <input type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt" style={{ display: 'none' }} ref={(el) => { fileInputsRef.current[r.id] = el; }} onChange={(e) => uploadFiles(r.id, e.target.files)} />
           <Space size={12} wrap className="table-action-group">
             <Button
@@ -1060,7 +1067,25 @@ export default function ContainersPage() {
   }, [totalPages]);
   const firstIdx = (page - 1) * pageSize;
   const lastIdx = firstIdx + pageSize;
-  const pagedRows = React.useMemo(() => filteredRows.slice(firstIdx, lastIdx), [filteredRows, firstIdx, lastIdx]);
+const pagedRows = React.useMemo(() => filteredRows.slice(firstIdx, lastIdx), [filteredRows, firstIdx, lastIdx]);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const updateShadows = () => {
+      const { scrollLeft, scrollWidth, clientWidth } = node;
+      node.classList.toggle('has-left', scrollLeft > 1);
+      node.classList.toggle('has-right', scrollLeft + clientWidth < scrollWidth - 1);
+    };
+    updateShadows();
+    node.addEventListener('scroll', updateShadows, { passive: true });
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateShadows) : null;
+    if (ro) ro.observe(node);
+    return () => {
+      node.removeEventListener('scroll', updateShadows);
+      ro?.disconnect();
+    };
+  }, [pagedRows.length, colOrder, visibleCols, page, pageSize]);
   useEffect(()=>{ try { localStorage.setItem(LS_PAGE, String(page)); } catch {} }, [page]);
   useEffect(()=>{ try { localStorage.setItem('containers.table.sumScope.v1', sumScope); } catch {} }, [sumScope]);
 
@@ -2071,15 +2096,16 @@ export default function ContainersPage() {
 
           {/* Secondary toolbar removed per request (exports, saved views, Kolone panel) */}
 
+          <div className="table-scroll scroll-shadow-left scroll-shadow-right" ref={scrollRef}>
           <table
             className="table responsive"
             style={{ tableLayout: "fixed", width: "100%" }}
           >
             <colgroup>
               {/* Selection */}
-              <col style={{ width: "36px" }} />
+              <col style={{ width: "60px" }} />
               {/* # */}
-              <col style={{ width: "56px" }} />
+              <col style={{ width: "80px" }} />
               {colOrder.filter(isColVisible).map((k) => {
                 const w = getColWidth(k as any, DEFAULT_COL_WIDTHS[k]);
                 return (<col key={`c-${k}`} style={{ width: `${w}px` }} />);
@@ -2087,7 +2113,7 @@ export default function ContainersPage() {
             </colgroup>
             <thead>
               <tr>
-                <th className="al-center">
+                <th className="al-center sticky-col selector">
                   <input
                     type="checkbox"
                     aria-label="Selektuj sve vidljive"
@@ -2114,22 +2140,22 @@ export default function ContainersPage() {
                     }}
                   />
                 </th>
-                <th className="al-center">#</th>
+                <th className="al-center sticky-col ordinal">#</th>
                 {colOrder.filter(isColVisible).map(renderHeaderCell)}
               </tr>
             </thead>
             <tbody>
               {showNewRow && (
                 <tr className="new-row compact">
-                  <td></td>
-                  <td>—</td>
+                  <td className="sticky-col selector"></td>
+                  <td className="sticky-col ordinal">—</td>
                   {colOrder.filter(isColVisible).map(renderNewRowCell)}
                 </tr>
               )}
 
               {showNewRow && newFiles.length > 0 && (
                 <tr>
-                  <td colSpan={17}>
+                  <td colSpan={colOrder.filter(isColVisible).length + 2}>
                     <div className="new-files">
                       {newFiles.map((f, idx) => (
                         <span key={idx} className="chip">
@@ -2146,7 +2172,7 @@ export default function ContainersPage() {
                 const ordinal = (page - 1) * pageSize + idx;
                 return (
                   <tr key={r.id}>
-                    <td className="al-center">
+                    <td className="al-center sticky-col selector">
                       <input
                         type="checkbox"
                         aria-label={`Selektuj red ${r.id}`}
@@ -2154,7 +2180,7 @@ export default function ContainersPage() {
                         onChange={() => toggleSelect(r.id)}
                       />
                     </td>
-                    <td className="al-center">{ordinal}</td>
+                    <td className="al-center sticky-col ordinal">{ordinal}</td>
                     {colOrder.filter(isColVisible).map(k => renderRowCell(k, r))}
                   </tr>
                 );
@@ -2163,14 +2189,18 @@ export default function ContainersPage() {
 
             <tfoot>
               <tr>
-                <td colSpan={13} style={{ fontWeight: 600 }} className="al-left">Sume</td>
+                <td className="sticky-col selector" />
+                <td className="sticky-col ordinal" />
+                <td colSpan={12} style={{ fontWeight: 600 }} className="al-left">Sume</td>
                 <td className="al-right" style={{ fontWeight: 700 }}>{fmtCurrency(totalSum)}</td>
                 <td className="al-right" style={{ fontWeight: 700 }}>{fmtCurrency(depositSum)}</td>
                 <td className="al-right" style={{ fontWeight: 700 }}>{fmtCurrency(balanceSum)}</td>
-                <td colSpan={2} />
+                <td className="sticky-col actions" />
               </tr>
             </tfoot>
           </table>
+          </div>
+          <div className="scroll-hint">Povuci za još kolona →</div>
 
           {/* Pagination controls (bottom, AntD) */}
           <Space style={{ width: '100%', justifyContent: 'space-between', marginTop: 8 }} align="center">

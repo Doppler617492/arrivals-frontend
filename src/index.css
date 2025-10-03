@@ -815,9 +815,9 @@ button:active{ transform: translateY(1px); }
 
 /* Column width hints (keeps everything on-screen when sidebar is open) */
 .table th:nth-child(1),
-.table td:nth-child(1) { width: 44px; }
+.table td:nth-child(1) { width: 60px; }
 .table th:nth-child(2),
-.table td:nth-child(2) { width: 220px; }
+.table td:nth-child(2) { width: 80px; }
 .table th:nth-child(3),
 .table td:nth-child(3) { width: 140px; }
 .table th:nth-child(4),
@@ -1129,3 +1129,85 @@ input[type=number] {
 
 .notif-inline { display:inline-flex; align-items:center; gap:8px; white-space:nowrap; }
 .notif-inline .ant-switch { vertical-align: middle; }
+
+/* -------- Containers table scroll behaviour -------- */
+.table-scroll {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 6px;
+}
+.table-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.55);
+  border-radius: 999px;
+}
+.table-scroll::-webkit-scrollbar-track {
+  background: rgba(226, 232, 240, 0.55);
+  border-radius: 999px;
+}
+.table-scroll.scroll-shadow-left::before,
+.table-scroll.scroll-shadow-right::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.table-scroll.scroll-shadow-left::before {
+  left: 0;
+  background: linear-gradient(to right, rgba(15, 23, 42, 0.15), rgba(15, 23, 42, 0));
+  opacity: 0;
+}
+.table-scroll.scroll-shadow-right::after {
+  right: 0;
+  background: linear-gradient(to left, rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0));
+  opacity: 0;
+}
+.table-scroll.has-left::before { opacity: 1; }
+.table-scroll.has-right::after { opacity: 1; }
+
+.table thead th.sticky-col,
+.table tbody td.sticky-col,
+.table tfoot td.sticky-col {
+  position: sticky;
+  background: #fff;
+  z-index: 3;
+}
+.table thead th.sticky-col.selector,
+.table tbody td.sticky-col.selector,
+.table tfoot td.sticky-col.selector {
+  left: 0;
+  z-index: 4;
+}
+.table thead th.sticky-col.ordinal,
+.table tbody td.sticky-col.ordinal,
+.table tfoot td.sticky-col.ordinal {
+  left: 60px;
+  z-index: 4;
+}
+.table thead th.sticky-col.actions,
+.table tbody td.sticky-col.actions,
+.table tfoot td.sticky-col.actions {
+  right: 0;
+  z-index: 4;
+}
+
+.currency-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.scroll-hint {
+  font-size: 11px;
+  color: #6b7280;
+  text-align: right;
+  margin-top: 4px;
+}
+.table-scroll:not(.has-right):not(.has-left) + .scroll-hint {
+  display: none;
+}
