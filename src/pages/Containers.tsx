@@ -41,6 +41,13 @@ const STATUS_OPTIONS = [
   { value: 'delivered', label: 'Isporučeno' },
 ] as const;
 
+const STATUS_LABELS: Record<string, string> = {
+  pending: 'Najavljeno',
+  shipped: 'U transportu',
+  arrived: 'Stiglo',
+  delivered: 'Isporučeno',
+};
+
 const API_BASE: string = ((import.meta as any)?.env?.VITE_API_BASE || "http://localhost:8081").replace(/\/$/, "");
 
 type FileMeta = {
@@ -570,7 +577,14 @@ export default function ContainersPage() {
       supplier:'Dobavljač', proforma_no:'Proforma', etd:'ETD', delivery:'Delivery', eta:'ETA', cargo_qty:'Qty', cargo:'Tip', container_no:'Kontejner', roba:'Roba', contain_price:'Cijena', agent:'Agent', total:'Total', deposit:'Depozit', balance:'Balans', status:'Status', paid:'Plaćanje', actions:'Akcije'
     } as any;
     const align = (k==='cargo_qty' || k==='contain_price' || k==='total' || k==='deposit' || k==='balance') ? 'al-right' : (k==='proforma_no' || k==='etd' || k==='delivery' || k==='eta' || k==='paid' || k==='status' || k==='actions') ? 'al-center' : 'al-left';
-    const extraClass = k==='paid' ? ' payment-column' : k==='actions' ? ' actions-column sticky-col actions' : '';
+    const extraClass =
+      k === 'paid'
+        ? ' payment-column'
+        : k === 'actions'
+          ? ' actions-column sticky-col actions'
+          : k === 'status'
+            ? ' status-column'
+            : '';
     const sortField = sortableColumnMap[k];
     if (!sortField) {
       return <th key={`h-${k}`} className={`${align}${extraClass}`}>{labels[k]}</th>;
@@ -724,12 +738,14 @@ export default function ContainersPage() {
 
       case 'status':
         return (
-          <td key={`n-${k}`} className="al-center">
+          <td key={`n-${k}`} className="status-cell">
             <Select
               size="small"
+              className="status-select"
+              dropdownMatchSelectWidth={false}
               value={newRow.status || 'pending'}
               onChange={(v)=> setNewRow((s)=> ({ ...s, status: String(v) }))}
-              style={{ width: 140 }}
+              style={{ width: 148 }}
               options={STATUS_OPTIONS as any}
             />
           </td>
@@ -756,7 +772,7 @@ export default function ContainersPage() {
   function renderRowCell(k: ColKey, r: Container) {
     switch (k) {
       case 'supplier': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="supplier" align="left" truncate onSave={(v)=>patchContainer(r.id,{ supplier: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
-      case 'proforma_no': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="proforma_no" align="center" onSave={(v)=> updateContainerWithFallbacks(r.id, { proforma_no: String(v||""), proforma:String(v||""), proformaNumber:String(v||""), proformaNo:String(v||""), proforma_number:String(v||""), pf_no:String(v||""), pfNumber:String(v||"") }).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />);
+      case 'proforma_no': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="proforma_no" align="center" truncate onSave={(v)=> updateContainerWithFallbacks(r.id, { proforma_no: String(v||""), proforma:String(v||""), proformaNumber:String(v||""), proformaNo:String(v||""), proforma_number:String(v||""), pf_no:String(v||""), pfNumber:String(v||"") }).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />);
       case 'etd': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="etd" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ etd: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'delivery': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="delivery" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ delivery: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'eta': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="eta" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ eta: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
@@ -766,22 +782,30 @@ export default function ContainersPage() {
       case 'roba': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="roba" align="left" truncate onSave={(v)=>patchContainer(r.id,{ roba: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'contain_price': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="contain_price" type="number" isCurrency align="right" onSave={(v)=>patchContainer(r.id,{ contain_price: Number(v||0)}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'agent': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="agent" align="left" truncate onSave={(v)=>patchContainer(r.id,{ agent: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
-      case 'status': return (
-        <td key={`c-${k}-${r.id}`} className="al-center">
-          <Select
-            size="small"
-            className="table-status-select"
-            value={(r.status || 'pending') as any}
-            onChange={async (v)=> {
-              const next = String(v);
-              setRows(prev => prev.map(x => x.id===r.id ? { ...x, status: next } : x));
-              try { await updateContainerWithFallbacks(r.id, { status: next }); await qc.invalidateQueries({ queryKey: ['containers'] }); } catch (e) { /* rollback simplistic */ }
-            }}
-            style={{ width: 150 }}
-            options={STATUS_OPTIONS as any}
-          />
-        </td>
-      );
+      case 'status': {
+        const statusKey = String(r.status || 'pending').toLowerCase();
+        const statusLabel = STATUS_LABELS[statusKey] || (r.status || 'Bez statusa');
+        return (
+          <td key={`c-${k}-${r.id}`} className="status-cell">
+            <div className="status-cell-inner">
+              <span className={`status-badge status-${statusKey}`}>{statusLabel}</span>
+              <Select
+                size="small"
+                className="status-select"
+                dropdownMatchSelectWidth={false}
+                value={statusKey}
+                onChange={async (v)=> {
+                  const next = String(v);
+                  setRows(prev => prev.map(x => x.id===r.id ? { ...x, status: next } : x));
+                  try { await updateContainerWithFallbacks(r.id, { status: next }); await qc.invalidateQueries({ queryKey: ['containers'] }); } catch (e) { /* rollback simplistic */ }
+                }}
+                style={{ width: 148 }}
+                options={STATUS_OPTIONS as any}
+              />
+            </div>
+          </td>
+        );
+      }
       case 'total': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="total" type="number" isCurrency align="right" onSave={async (v)=>{ let T = parseMoney(v); if (!Number.isFinite(T) || T < 0) { alert('Total ne može biti negativan. Postavljeno na 0.'); T = 0; } const D = parseMoney(r.deposit); const nextBalance = +(T - D).toFixed(2); setRows(prev => prev.map(x => x.id===r.id ? { ...x, total: T, balance: nextBalance } : x)); await patchContainer(r.id,{ total: T}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
       case 'deposit': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="deposit" type="number" isCurrency align="right" onSave={async (v)=>{ let D = parseMoney(v); if (!Number.isFinite(D) || D < 0) { alert('Depozit ne može biti negativan. Postavljeno na 0.'); D = 0; } const T = parseMoney(r.total); const nextBalance = +(T - D).toFixed(2); setRows(prev => prev.map(x => x.id===r.id ? { ...x, deposit: D, balance: nextBalance } : x)); await patchContainer(r.id,{ deposit: D}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
       case 'balance': return (
@@ -2108,7 +2132,7 @@ export default function ContainersPage() {
 
           {/* Secondary toolbar removed per request (exports, saved views, Kolone panel) */}
 
-          <div className="table-scroll scroll-shadow-left scroll-shadow-right" ref={scrollRef}>
+          <div className="table-scroll" ref={scrollRef}>
           <table
             className="table responsive"
             style={{ tableLayout: "fixed", width: "100%" }}

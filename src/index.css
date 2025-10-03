@@ -773,6 +773,155 @@ button:active{ transform: translateY(1px); }
 /* Ensure headers use the same alignment helpers */
 .table thead th.al-left { text-align: left; }
 .table thead th.al-right { text-align: right; font-variant-numeric: tabular-nums; }
+.table td.al-right { text-align: right; font-variant-numeric: tabular-nums; }
+
+.table tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+.table tbody tr:nth-child(even):hover {
+  background: #eef2ff;
+}
+
+.table-scroll {
+  position: relative;
+  max-height: clamp(360px, 60vh, 520px);
+  overflow-x: auto;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+.table-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.55);
+  border-radius: 999px;
+}
+.table-scroll::-webkit-scrollbar-track {
+  background: rgba(226, 232, 240, 0.55);
+  border-radius: 999px;
+}
+.table-scroll::before,
+.table-scroll::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  opacity: 0;
+}
+.table-scroll::before {
+  left: 0;
+  background: linear-gradient(to right, rgba(15, 23, 42, 0.15), rgba(15, 23, 42, 0));
+}
+.table-scroll::after {
+  right: 0;
+  background: linear-gradient(to left, rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0));
+}
+.table-scroll.has-left::before { opacity: 1; }
+.table-scroll.has-right::after { opacity: 1; }
+
+.table thead th.sticky-col,
+.table tbody td.sticky-col,
+.table tfoot td.sticky-col {
+  position: sticky;
+  background: #fff;
+  z-index: 3;
+}
+.table thead th.sticky-col.selector,
+.table tbody td.sticky-col.selector,
+.table tfoot td.sticky-col.selector {
+  left: 0;
+  z-index: 4;
+}
+.table thead th.sticky-col.ordinal,
+.table tbody td.sticky-col.ordinal,
+.table tfoot td.sticky-col.ordinal {
+  left: 60px;
+  z-index: 4;
+}
+.table thead th.sticky-col.actions,
+.table tbody td.sticky-col.actions,
+.table tfoot td.sticky-col.actions {
+  right: 0;
+  z-index: 4;
+}
+
+.currency-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cell-truncate {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-cell,
+.table th.status-column {
+  min-width: 150px;
+  text-align: center;
+}
+.status-cell-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.status-select .ant-select-selector {
+  border-radius: 999px !important;
+  height: 32px !important;
+}
+.status-select .ant-select-selection-item {
+  display: flex !important;
+  align-items: center;
+}
+.status-select .ant-select-arrow {
+  font-size: 10px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-transform: capitalize;
+}
+.status-badge.status-pending {
+  background: rgba(59, 130, 246, 0.15);
+  color: #1d4ed8;
+}
+.status-badge.status-shipped {
+  background: rgba(14, 165, 233, 0.18);
+  color: #0369a1;
+}
+.status-badge.status-arrived {
+  background: rgba(34, 197, 94, 0.18);
+  color: #047857;
+}
+.status-badge.status-delivered {
+  background: rgba(88, 28, 135, 0.18);
+  color: #6d28d9;
+}
+
+.scroll-hint {
+  font-size: 11px;
+  color: #6b7280;
+  text-align: right;
+  margin-top: 4px;
+}
+.table-scroll:not(.has-right):not(.has-left) + .scroll-hint {
+  display: none;
+}
 .table thead th.al-center { text-align: center; }
 
 .table { table-layout: auto; }
