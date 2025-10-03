@@ -772,7 +772,7 @@ button:active{ transform: translateY(1px); }
 
 /* Ensure headers use the same alignment helpers */
 .table thead th.al-left { text-align: left; }
-.table thead th.al-right { text-align: right; }
+.table thead th.al-right { text-align: right; font-variant-numeric: tabular-nums; }
 .table thead th.al-center { text-align: center; }
 
 .table { table-layout: auto; }
@@ -1200,6 +1200,14 @@ input[type=number] {
 .currency-cell {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.cell-truncate {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .scroll-hint {

@@ -251,6 +251,7 @@ function EditableCell({
   options,
   onSave,
   sticky,
+  truncate = false,
   align,
   min,
   max,
@@ -262,6 +263,7 @@ function EditableCell({
   options?: string[]; // for select/status
   onSave: (value: any) => Promise<void> | void;
   sticky?: "selector" | "ordinal" | "actions";
+  truncate?: boolean;
   align?: "left" | "right" | "center";
   min?: number;
   max?: number;
@@ -322,18 +324,19 @@ function EditableCell({
     if (typeof display === "string" && display.trim().toLowerCase() === "nan") display = "";
     if (type === "date") display = toEU(String(display));
     if (isCurrency) {
-      if (display === "" || display === null || (typeof display === 'string' && !display.trim())) {
-        display = "";
-      } else {
-        display = fmtCurrency(display);
-      }
+      display = display === "" || display === null || (typeof display === 'string' && !display.trim())
+        ? ""
+        : fmtCurrency(display);
     }
     if (typeof display === "number" && Number.isNaN(display)) display = "";
+    const hasValue = display !== "" && display !== null && display !== undefined;
+    const stringValue = hasValue ? String(display) : "";
+    const cellTitle = truncate && stringValue ? stringValue : 'Dvaput kliknite za uređivanje';
 
     // status badge coloring for all statuses
     let badgeClass = "ghost";
     if (type === "select") {
-      const sv = String(display).toLowerCase();
+      const sv = stringValue.toLowerCase();
       if (sv.includes("plaćeno")) badgeClass = "green";
       else if (sv.includes("nije")) badgeClass = "red";
       else if (sv.includes("transport")) badgeClass = "blue";
@@ -342,11 +345,20 @@ function EditableCell({
     }
 
     return (
-      <td style={baseStyle} className={tdClassName} onDoubleClick={() => setEditing(true)} title="Dvaput kliknite za uređivanje">
+      <td
+        style={baseStyle}
+        className={tdClassName}
+        onDoubleClick={() => setEditing(true)}
+        title={cellTitle}
+      >
         {type === "select" ? (
-          <span className={`pill ${badgeClass}`}>{String(display) || "—"}</span>
+          <span className={`pill ${badgeClass}`}>{stringValue || "—"}</span>
         ) : (
-          display || "—"
+          truncate && stringValue ? (
+            <span className="cell-truncate">{stringValue}</span>
+          ) : (
+            stringValue || "—"
+          )
         )}
       </td>
     );
@@ -743,17 +755,17 @@ export default function ContainersPage() {
   }
   function renderRowCell(k: ColKey, r: Container) {
     switch (k) {
-      case 'supplier': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="supplier" align="left" onSave={(v)=>patchContainer(r.id,{ supplier: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'supplier': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="supplier" align="left" truncate onSave={(v)=>patchContainer(r.id,{ supplier: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'proforma_no': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="proforma_no" align="center" onSave={(v)=> updateContainerWithFallbacks(r.id, { proforma_no: String(v||""), proforma:String(v||""), proformaNumber:String(v||""), proformaNo:String(v||""), proforma_number:String(v||""), pf_no:String(v||""), pfNumber:String(v||"") }).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />);
       case 'etd': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="etd" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ etd: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'delivery': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="delivery" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ delivery: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'eta': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="eta" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ eta: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'cargo_qty': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="cargo_qty" type="number" align="right" onSave={(v)=>patchContainer(r.id,{ cargo_qty: Number(v||0)}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
-      case 'cargo': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="cargo" align="left" onSave={(v)=>patchContainer(r.id,{ cargo: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
-      case 'container_no': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="container_no" align="left" onSave={(v)=>patchContainer(r.id,{ container_no: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
-      case 'roba': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="roba" align="left" onSave={(v)=>patchContainer(r.id,{ roba: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'cargo': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="cargo" align="left" truncate onSave={(v)=>patchContainer(r.id,{ cargo: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'container_no': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="container_no" align="left" truncate onSave={(v)=>patchContainer(r.id,{ container_no: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'roba': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="roba" align="left" truncate onSave={(v)=>patchContainer(r.id,{ roba: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'contain_price': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="contain_price" type="number" isCurrency align="right" onSave={(v)=>patchContainer(r.id,{ contain_price: Number(v||0)}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
-      case 'agent': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="agent" align="left" onSave={(v)=>patchContainer(r.id,{ agent: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'agent': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="agent" align="left" truncate onSave={(v)=>patchContainer(r.id,{ agent: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'status': return (
         <td key={`c-${k}-${r.id}`} className="al-center">
           <Select
@@ -1067,7 +1079,7 @@ export default function ContainersPage() {
   }, [totalPages]);
   const firstIdx = (page - 1) * pageSize;
   const lastIdx = firstIdx + pageSize;
-const pagedRows = React.useMemo(() => filteredRows.slice(firstIdx, lastIdx), [filteredRows, firstIdx, lastIdx]);
+  const pagedRows = React.useMemo(() => filteredRows.slice(firstIdx, lastIdx), [filteredRows, firstIdx, lastIdx]);
 
   useEffect(() => {
     const node = scrollRef.current;
@@ -2191,11 +2203,30 @@ const pagedRows = React.useMemo(() => filteredRows.slice(firstIdx, lastIdx), [fi
               <tr>
                 <td className="sticky-col selector" />
                 <td className="sticky-col ordinal" />
-                <td colSpan={12} style={{ fontWeight: 600 }} className="al-left">Sume</td>
-                <td className="al-right" style={{ fontWeight: 700 }}>{fmtCurrency(totalSum)}</td>
-                <td className="al-right" style={{ fontWeight: 700 }}>{fmtCurrency(depositSum)}</td>
-                <td className="al-right" style={{ fontWeight: 700 }}>{fmtCurrency(balanceSum)}</td>
-                <td className="sticky-col actions" />
+                {colOrder.filter(isColVisible).map((k) => {
+                  const align = (k==='cargo_qty' || k==='contain_price' || k==='total' || k==='deposit' || k==='balance')
+                    ? 'right'
+                    : (k==='proforma_no' || k==='etd' || k==='delivery' || k==='eta' || k==='paid' || k==='status')
+                      ? 'center'
+                      : 'left';
+                  const classes = [
+                    alignToClass(align as any),
+                    (k === 'actions') ? 'sticky-col actions actions-column' : '',
+                    (k === 'paid') ? 'payment-cell' : '',
+                    (k === 'contain_price' || k === 'total' || k === 'deposit' || k === 'balance') ? 'currency-cell' : '',
+                  ].filter(Boolean).join(' ');
+                  let content: React.ReactNode = '—';
+                  if (k === 'total') content = fmtCurrency(totalSum);
+                  else if (k === 'deposit') content = fmtCurrency(depositSum);
+                  else if (k === 'balance') content = fmtCurrency(balanceSum);
+                  else if (k === 'actions') content = null;
+                  else if (k === 'contain_price') content = '—';
+                  return (
+                    <td key={`foot-${k}`} className={classes} style={k === 'total' || k === 'deposit' || k === 'balance' ? { fontWeight: 700 } : undefined}>
+                      {content}
+                    </td>
+                  );
+                })}
               </tr>
             </tfoot>
           </table>
