@@ -311,11 +311,10 @@ function EditableCell({
     if (typeof display === "string" && display.trim().toLowerCase() === "nan") display = "";
     if (type === "date") display = toEU(String(display));
     if (isCurrency) {
-      if (display === "" || display === null) {
+      if (display === "" || display === null || (typeof display === 'string' && !display.trim())) {
         display = "";
       } else {
-        const numeric = Number(display);
-        display = Number.isFinite(numeric) ? fmtCurrency(numeric) : "";
+        display = fmtCurrency(display);
       }
     }
     if (typeof display === "number" && Number.isNaN(display)) display = "";
