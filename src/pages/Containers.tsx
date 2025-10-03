@@ -269,6 +269,11 @@ function EditableCell({
     if (input === null || input === undefined) return type === "number" ? 0 : "";
     if (typeof input === "number" && Number.isNaN(input)) return type === "number" ? 0 : "";
     if (typeof input === "string" && input.trim().toLowerCase() === "nan") return "";
+    if (isCurrency) return parseMoney(input);
+    if (type === "number" && typeof input === "string") {
+      const parsed = Number(input);
+      return Number.isFinite(parsed) ? parsed : parseMoney(input);
+    }
     return input;
   };
   const [value, setValue] = useState<any>(normalize(row[field]));
@@ -490,7 +495,7 @@ export default function ContainersPage() {
     cargo: 90,
     container_no: 130,
     roba: 140,
-    contain_price: 100,
+    contain_price: 110,
     agent: 120,
     total: 110,
     deposit: 110,
