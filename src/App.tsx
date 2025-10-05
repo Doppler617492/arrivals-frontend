@@ -15,7 +15,6 @@ import { Layout, Menu, Button, Input, Dropdown, Avatar, Badge, Drawer, Switch, A
 import { AppstoreOutlined, UserOutlined, ContainerOutlined, MenuFoldOutlined, MenuUnfoldOutlined, BellOutlined, SearchOutlined, CarOutlined, MoreOutlined, DeleteOutlined, EyeOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useUIStore } from "./store";
 import MuseDashboard from "./pages/MuseDashboard";
-import AnalyticsArrivals from "./pages/AnalyticsArrivals";
 import AnalyticsContainers from "./pages/AnalyticsContainers";
 import VozilaPage from "./pages/Vozila";
 import AuthDebug from "./pages/AuthDebug";
@@ -170,7 +169,6 @@ function EnterpriseShell() {
           { key: '/dashboard', icon: <AppstoreOutlined />, label: 'Dashboard' },
           { key: '/arrivals', icon: <AppstoreOutlined />, label: 'Dolazci' },
           { key: '/containers', icon: <ContainerOutlined />, label: 'Kontejneri' },
-          { key: '/analytics/arrivals', icon: <AppstoreOutlined />, label: 'Analitika (Dolazci)' },
           { key: '/analytics/containers', icon: <ContainerOutlined />, label: 'Analitika (Kontejneri)' },
           { key: '/users', icon: <UserOutlined />, label: 'Korisnici' },
           { key: '/vozila', icon: <CarOutlined />, label: 'Vozila' },
@@ -327,7 +325,7 @@ function EnterpriseShell() {
             <Route path="/vozila" element={<VozilaPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/admin/auth-debug" element={<AuthDebug />} />
-            <Route path="/analytics/arrivals" element={<AnalyticsArrivals />} />
+            <Route path="/analytics/arrivals" element={<Navigate to="/dashboard" replace />} />
             <Route path="/analytics/containers" element={<AnalyticsContainers />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route index element={<Navigate to="/dashboard" replace />} />

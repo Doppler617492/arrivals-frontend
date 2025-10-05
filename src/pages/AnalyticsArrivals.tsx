@@ -19,16 +19,28 @@ type BreakdownItem = {
   scheduled_samples?: number;
 };
 
-const euroFormatter = new Intl.NumberFormat('sr-RS', {
+const euroFormatter = new Intl.NumberFormat('de-DE', {
   style: 'currency',
   currency: 'EUR',
   maximumFractionDigits: 2,
+  minimumFractionDigits: 2,
 });
+const euroNumberFormatter = new Intl.NumberFormat('de-DE', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 
 function formatCurrency(value: number | undefined | null): string {
   const num = Number(value || 0);
-  if (!Number.isFinite(num)) return '€0,00';
+  if (!Number.isFinite(num)) return euroFormatter.format(0);
   return euroFormatter.format(num);
+}
+
+function formatNumber(value: number | undefined | null): string {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return euroNumberFormatter.format(0);
+  return euroNumberFormatter.format(num);
 }
 
 function formatPercent(value: number | undefined | null): string {
@@ -427,11 +439,14 @@ export default function AnalyticsArrivals() {
   const topSupOpt = (items:any[]) => ({
     backgroundColor: bgColor,
     tooltip:{ trigger:'axis', axisPointer:{ type:'shadow' }, formatter:(params:any)=>{
-      const lines = params.map((p:any)=> `${p.seriesName}: ${p.seriesName==='Ukupno' ? (Number(p.value||0)).toLocaleString('en-GB',{style:'currency',currency:'EUR'}) : Number(p.value||0).toLocaleString('en-GB')}`);
+      const lines = params.map((p:any) => {
+        const raw = Number(p.value || 0);
+        return `${p.seriesName}: ${p.seriesName==='Ukupno' ? formatCurrency(raw) : formatNumber(raw)}`;
+      });
       return `${params[0]?.axisValueLabel||''}<br/>`+lines.join('<br/>');
     } }, grid:{ left:60,right:16,top:16,bottom:24 },
     xAxis:{ type:'category', data: items.map((r:any)=> r.supplier), axisLabel:{ color:textColor, rotate:-20 }, axisLine:{ lineStyle:{ color:gridColor } } },
-    yAxis:{ type:'value', axisLabel:{ color:textColor, formatter:(v:any)=> (Number(v||0)).toLocaleString('en-GB',{style:'currency',currency:'EUR'}) }, splitLine:{ lineStyle:{ color:gridColor, opacity:.4 } } },
+    yAxis:{ type:'value', axisLabel:{ color:textColor, formatter:(v:any)=> formatCurrency(Number(v||0)) }, splitLine:{ lineStyle:{ color:gridColor, opacity:.4 } } },
     series:[{ type:'bar', data: items.map((r:any)=> r.total), itemStyle:{ color:'#22c55e', borderRadius:[6,6,0,0] }, name:'Ukupno' }]
   }) as echarts.EChartsOption;
   const onTimeOpt = (b:any) => ({
@@ -574,11 +589,11 @@ export default function AnalyticsArrivals() {
         <Col xs={24} sm={12} md={6}><Card><Statistic title="Današnji dolasci" value={kpi?.today_count ?? 0} /></Card></Col>
         <Col xs={24} sm={12} md={6}><Card><Statistic title="Na putu" value={kpi?.in_transit ?? 0} /></Card></Col>
         <Col xs={24} sm={12} md={6}><Card><Statistic title="Stiglo" value={kpi?.arrived ?? 0} /></Card></Col>
-        <Col xs={24} sm={12} md={6}><Card><Statistic title="Ukupni trošak (mjesec)" value={kpi?.total_cost_month ?? 0} precision={2} prefix="€" /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="Ukupni trošak (mjesec)" value={kpi?.total_cost_month ?? 0} formatter={(val)=> formatCurrency(Number(val))} /></Card></Col>
       </Row>
       <Row gutter={[16,16]}>
-        <Col xs={24} sm={12} md={8}><Card><Statistic title="Suma troškova (period)" value={kpi?.total_cost_window ?? 0} precision={2} prefix="€" /></Card></Col>
-        <Col xs={24} sm={12} md={8}><Card><Statistic title="Prosjek po dolasku (period)" value={kpi?.avg_cost_window ?? 0} precision={2} prefix="€" /></Card></Col>
+        <Col xs={24} sm={12} md={8}><Card><Statistic title="Suma troškova (period)" value={kpi?.total_cost_window ?? 0} formatter={(val)=> formatCurrency(Number(val))} /></Card></Col>
+        <Col xs={24} sm={12} md={8}><Card><Statistic title="Prosjek po dolasku (period)" value={kpi?.avg_cost_window ?? 0} formatter={(val)=> formatCurrency(Number(val))} /></Card></Col>
         <Col xs={24} sm={12} md={8}><Card><Statistic title="Dolazaka u periodu" value={kpi?.count_window ?? 0} /></Card></Col>
       </Row>
 
@@ -588,9 +603,9 @@ export default function AnalyticsArrivals() {
             <div style={{ width:'100%', height: 300 }}>
               <ReactECharts ref={refCosts} option={{
                 backgroundColor: bgColor,
-                tooltip:{ trigger:'axis', valueFormatter:(v:any)=> (Number(v||0)).toLocaleString('en-GB',{style:'currency',currency:'EUR'}) }, legend:{ top:8,right:8,textStyle:{ color:textColor } }, grid:{ left:60,right:16,top:32,bottom:28 },
+                tooltip:{ trigger:'axis', valueFormatter:(v:any)=> formatCurrency(Number(v||0)) }, legend:{ top:8,right:8,textStyle:{ color:textColor } }, grid:{ left:60,right:16,top:32,bottom:28 },
                 xAxis:{ type:'category', data: (Array.isArray(qCostsSeries.data)? qCostsSeries.data: []).map((d:any)=> String(d.period||'').slice(0,7)), axisLabel:{ color:textColor }, axisLine:{ lineStyle:{ color:gridColor } } },
-                yAxis:{ type:'value', axisLabel:{ color:textColor, formatter:(v:any)=> (Number(v||0)).toLocaleString('en-GB',{style:'currency',currency:'EUR'}) }, splitLine:{ lineStyle:{ color:gridColor, opacity:.4 } } },
+                yAxis:{ type:'value', axisLabel:{ color:textColor, formatter:(v:any)=> formatCurrency(Number(v||0)) }, splitLine:{ lineStyle:{ color:gridColor, opacity:.4 } } },
                 series:[
                   { name:'Roba', type:'bar', stack:'cost', itemStyle:{ borderRadius:[6,6,0,0] }, data: (Array.isArray(qCostsSeries.data)? qCostsSeries.data: []).map((d:any)=> d.goods||0), color:'#3b82f6' },
                   { name:'Prevoz', type:'bar', stack:'cost', itemStyle:{ borderRadius:[6,6,0,0] }, data: (Array.isArray(qCostsSeries.data)? qCostsSeries.data: []).map((d:any)=> d.freight||0), color:'#22c55e' },
@@ -663,7 +678,7 @@ export default function AnalyticsArrivals() {
               columns={[
                 { title:'Dobavljač', dataIndex:'supplier', key:'supplier' },
                 { title:'Broj', dataIndex:'count', key:'count', align:'right' },
-                { title:'Ukupno', dataIndex:'total', key:'total', align:'right', render:(v)=>`€${Number(v).toLocaleString('en-GB',{maximumFractionDigits:2})}` },
+                { title:'Ukupno', dataIndex:'total', key:'total', align:'right', render:(v)=>formatCurrency(Number(v||0)) },
                 { title:'Avg kašnjenje (h)', dataIndex:'avg_delay_h', key:'avg_delay_h', align:'right', render:(v)=>Number(v).toFixed(1) },
               ]}
             />
@@ -735,9 +750,9 @@ export default function AnalyticsArrivals() {
             { title: 'Status', dataIndex:'status', key:'status' },
             { title: 'ETA', dataIndex:'eta', key:'eta' },
             { title: 'Stiglo', dataIndex:'arrived_at', key:'arrived_at' },
-            { title: 'Prevoz €', dataIndex:'freight_cost', key:'freight_cost', align:'right', render:(v)=>Number(v||0).toLocaleString('en-GB',{minimumFractionDigits:2, maximumFractionDigits:2}) },
-            { title: 'Carina €', dataIndex:'customs_cost', key:'customs_cost', align:'right', render:(v)=>Number(v||0).toLocaleString('en-GB',{minimumFractionDigits:2, maximumFractionDigits:2}) },
-            { title: 'Roba €', dataIndex:'goods_cost', key:'goods_cost', align:'right', render:(v)=>Number(v||0).toLocaleString('en-GB',{minimumFractionDigits:2, maximumFractionDigits:2}) },
+            { title: 'Prevoz €', dataIndex:'freight_cost', key:'freight_cost', align:'right', render:(v)=>formatCurrency(Number(v||0)) },
+            { title: 'Carina €', dataIndex:'customs_cost', key:'customs_cost', align:'right', render:(v)=>formatCurrency(Number(v||0)) },
+            { title: 'Roba €', dataIndex:'goods_cost', key:'goods_cost', align:'right', render:(v)=>formatCurrency(Number(v||0)) },
           ]}
         />
       </Modal>

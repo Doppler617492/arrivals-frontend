@@ -31,6 +31,25 @@ type Container = {
   paid?: boolean;
 };
 
+const FIELD_LABELS: Record<string, string> = {
+  supplier: 'Dobavljač',
+  proforma_no: 'Proforma',
+  etd: 'ETD',
+  delivery: 'Delivery',
+  eta: 'ETA',
+  cargo_qty: 'Qty',
+  cargo: 'Tip',
+  container_no: 'Kontejner',
+  roba: 'Roba',
+  contain_price: 'Cijena',
+  agent: 'Agent',
+  total: 'Ukupno',
+  deposit: 'Depozit',
+  balance: 'Saldo',
+  status: 'Status',
+  paid: 'Plaćanje',
+};
+
 /* =========================
    Config
 ========================= */
@@ -39,6 +58,8 @@ const STATUS_OPTIONS = [
   { value: 'shipped', label: 'U transportu' },
   { value: 'arrived', label: 'Stiglo' },
   { value: 'delivered', label: 'Isporučeno' },
+  { value: 'paid', label: 'Plaćeno' },
+  { value: 'unpaid', label: 'Nije plaćeno' },
 ] as const;
 
 const STATUS_LABELS: Record<string, string> = {
@@ -46,6 +67,8 @@ const STATUS_LABELS: Record<string, string> = {
   shipped: 'U transportu',
   arrived: 'Stiglo',
   delivered: 'Isporučeno',
+  paid: 'Plaćeno',
+  unpaid: 'Nije plaćeno',
 };
 
 const API_BASE: string = ((import.meta as any)?.env?.VITE_API_BASE || "http://localhost:8081").replace(/\/$/, "");
@@ -262,6 +285,7 @@ function EditableCell({
   align,
   min,
   max,
+  label,
 }: {
   row: Container;
   field: keyof Container;
@@ -274,6 +298,7 @@ function EditableCell({
   align?: "left" | "right" | "center";
   min?: number;
   max?: number;
+  label?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const normalize = (input: any) => {
@@ -319,7 +344,9 @@ function EditableCell({
   // AntD inputs commit on blur/Enter; Escape handling is omitted for simplicity.
 
   const baseStyle: React.CSSProperties = { textAlign: align || (isCurrency ? "right" : undefined) };
+  const dataLabel = label ?? FIELD_LABELS[String(field)] ?? undefined;
   const tdClassName = [
+    'data-cell',
     alignToClass(align || (isCurrency ? "right" : "left")),
     sticky ? `sticky-col ${sticky}` : '',
     isCurrency ? 'currency-cell' : '',
@@ -355,6 +382,7 @@ function EditableCell({
       <td
         style={baseStyle}
         className={tdClassName}
+        data-label={dataLabel}
         onDoubleClick={() => setEditing(true)}
         title={cellTitle}
       >
@@ -373,7 +401,7 @@ function EditableCell({
 
   // edit mode
   return (
-    <td style={baseStyle} className={tdClassName}>
+    <td style={baseStyle} className={tdClassName} data-label={dataLabel}>
       {type === 'select' && options ? (
         <Select
           ref={inputRef}
@@ -427,8 +455,12 @@ export default function ContainersPage() {
   const fileInputsRef = useRef<Record<number, HTMLInputElement | null>>({});
   const newFileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const bottomScrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollSyncLock = useRef(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [newFiles, setNewFiles] = useState<File[]>([]);
+  const [bottomScrollWidth, setBottomScrollWidth] = useState(0);
 
   // files modal
   const [filesModalId, setFilesModalId] = useState<number | null>(null);
@@ -458,7 +490,6 @@ export default function ContainersPage() {
   // ---- filters & sorting (page header) ----
   const [filterSupplier, setFilterSupplier] = useState<string>(""); // empty = all
   const [filterPaid, setFilterPaid] = useState<"all" | "paid" | "unpaid">("all");
-  const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterFrom, setFilterFrom] = useState<string>(""); // ISO date
   const [filterTo, setFilterTo] = useState<string>("");     // ISO date
   const [filterDateField, setFilterDateField] = useState<"eta" | "etd" | "delivery">("eta");
@@ -478,21 +509,48 @@ export default function ContainersPage() {
     | "total"
     | "deposit"
     | "balance"
-    | "paid"
-    | "status";
+    | "paid";
 
   const [sortBy, setSortBy] = useState<SortField>("eta");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   // ---- column visibility (persisted) ----
   const ALL_COLS = [
-    'supplier','proforma_no','etd','delivery','eta','cargo_qty','cargo','container_no','roba','contain_price','agent','total','deposit','balance','status','paid','actions'
+    'supplier','proforma_no','etd','delivery','eta','cargo_qty','cargo','container_no','roba','contain_price','agent','total','deposit','balance','paid','actions'
   ] as const;
   type ColKey = typeof ALL_COLS[number];
+  const COLUMN_LABELS: Record<ColKey, string> = {
+    supplier: 'Dobavljač',
+    proforma_no: 'Proforma',
+    etd: 'ETD',
+    delivery: 'Delivery',
+    eta: 'ETA',
+    cargo_qty: 'Qty',
+    cargo: 'Tip',
+    container_no: 'Kontejner',
+    roba: 'Roba',
+    contain_price: 'Cijena',
+    agent: 'Agent',
+    total: 'Ukupno',
+    deposit: 'Depozit',
+    balance: 'Saldo',
+    paid: 'Plaćanje',
+    actions: 'Akcije',
+  } as const;
   const [visibleCols] = useState<Record<ColKey, boolean>>(() => {
     try {
       const raw = localStorage.getItem('containers.table.visibleCols.v1');
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          const result: Record<ColKey, boolean> = {} as any;
+          for (const key of ALL_COLS) {
+            const value = (parsed as Record<string, boolean | undefined>)[key];
+            result[key] = value !== undefined ? !!value : true;
+          }
+          return result;
+        }
+      }
     } catch {}
     return ALL_COLS.reduce((acc:any,k)=>{ acc[k]=true; return acc; },{});
   });
@@ -526,13 +584,25 @@ export default function ContainersPage() {
     total: 110,
     deposit: 110,
     balance: 110,
-    paid: 110,
-    status: 110,
-    actions: 180,
+    paid: 220,
+    actions: 200,
   } as const;
   // Column order (DnD) persisted
   const [colOrder] = useState<ColKey[]>(() => {
-    try { const raw = localStorage.getItem('containers.table.colOrder.v1'); if (raw) return JSON.parse(raw); } catch {}
+    try {
+      const raw = localStorage.getItem('containers.table.colOrder.v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const allowed = new Set<ColKey>(ALL_COLS as readonly ColKey[]);
+          const sanitized: ColKey[] = parsed.filter((key: any): key is ColKey => allowed.has(key));
+          for (const key of ALL_COLS) {
+            if (!sanitized.includes(key)) sanitized.push(key);
+          }
+          return sanitized;
+        }
+      }
+    } catch {}
     return [...ALL_COLS];
   });
   // Column order save function removed with UI
@@ -553,7 +623,6 @@ export default function ContainersPage() {
     total: 'total',
     deposit: 'deposit',
     balance: 'balance',
-    status: 'status',
     paid: 'paid',
   };
 
@@ -573,21 +642,17 @@ export default function ContainersPage() {
 
   // Render helpers (header/new-row/row cells)
   function renderHeaderCell(k: ColKey) {
-    const labels: Record<ColKey, string> = {
-      supplier:'Dobavljač', proforma_no:'Proforma', etd:'ETD', delivery:'Delivery', eta:'ETA', cargo_qty:'Qty', cargo:'Tip', container_no:'Kontejner', roba:'Roba', contain_price:'Cijena', agent:'Agent', total:'Total', deposit:'Depozit', balance:'Balans', status:'Status', paid:'Plaćanje', actions:'Akcije'
-    } as any;
-    const align = (k==='cargo_qty' || k==='contain_price' || k==='total' || k==='deposit' || k==='balance') ? 'al-right' : (k==='proforma_no' || k==='etd' || k==='delivery' || k==='eta' || k==='paid' || k==='status' || k==='actions') ? 'al-center' : 'al-left';
+    const label = COLUMN_LABELS[k];
+    const align = (k==='cargo_qty' || k==='contain_price' || k==='total' || k==='deposit' || k==='balance') ? 'al-right' : (k==='proforma_no' || k==='etd' || k==='delivery' || k==='eta' || k==='paid' || k==='actions') ? 'al-center' : 'al-left';
     const extraClass =
       k === 'paid'
         ? ' payment-column'
         : k === 'actions'
           ? ' actions-column sticky-col actions'
-          : k === 'status'
-            ? ' status-column'
-            : '';
+          : '';
     const sortField = sortableColumnMap[k];
     if (!sortField) {
-      return <th key={`h-${k}`} className={`${align}${extraClass}`}>{labels[k]}</th>;
+      return <th key={`h-${k}`} className={`${align}${extraClass}`}>{label}</th>;
     }
     const isSorted = sortBy === sortField;
     const indicator = isSorted ? (sortDir === 'asc' ? '▲' : '▼') : '⇅';
@@ -595,7 +660,7 @@ export default function ContainersPage() {
     return (
       <th key={`h-${k}`} className={`${align} table-sortable${extraClass}`} aria-sort={ariaSort}>
         <button type="button" className={`table-sort-button${isSorted ? ' is-active' : ''}`} onClick={() => handleHeaderSort(k)}>
-          <span>{labels[k]}</span>
+          <span>{label}</span>
           <span className="table-sort-icon" aria-hidden>{indicator}</span>
         </button>
       </th>
@@ -723,31 +788,36 @@ export default function ContainersPage() {
         return (
           <td key={`n-${k}`} className="payment-cell">
             <div className="payment-cell-inner">
-              <span className={`payment-label ${newRow.paid ? 'payment-label--paid' : 'payment-label--unpaid'}`}>
-                {newRow.paid ? 'Plaćeno' : 'Nije plaćeno'}
-              </span>
-              <Switch
-                size="small"
-                className="table-switch"
-                checked={!!newRow.paid}
-                onChange={(checked) => setNewRow((s) => ({ ...s, paid: !!checked }))}
-              />
+              <div className="payment-group">
+                <span className="payment-meta-title">Status</span>
+                <div className="payment-row">
+                  <span className={`status-badge status-${(newRow.status || 'pending').replace(/[^a-z0-9_-]+/g, '-')}`}>{STATUS_LABELS[String(newRow.status || 'pending').toLowerCase()] || newRow.status || 'Najavljeno'}</span>
+                  <Select
+                    size="small"
+                    className="status-select"
+                    dropdownMatchSelectWidth={false}
+                    value={newRow.status || 'pending'}
+                    onChange={(v)=> setNewRow((s)=> ({ ...s, status: String(v) }))}
+                    style={{ minWidth: 140 }}
+                    options={STATUS_OPTIONS as any}
+                  />
+                </div>
+              </div>
+              <div className="payment-group">
+                <span className="payment-meta-title">Plaćanje</span>
+                <div className="payment-row">
+                  <span className={`payment-label ${newRow.paid ? 'payment-label--paid' : 'payment-label--unpaid'}`}>
+                    {newRow.paid ? 'Plaćeno' : 'Nije plaćeno'}
+                  </span>
+                  <Switch
+                    size="small"
+                    className="table-switch"
+                    checked={!!newRow.paid}
+                    onChange={(checked) => setNewRow((s) => ({ ...s, paid: !!checked }))}
+                  />
+                </div>
+              </div>
             </div>
-          </td>
-        );
-
-      case 'status':
-        return (
-          <td key={`n-${k}`} className="status-cell">
-            <Select
-              size="small"
-              className="status-select"
-              dropdownMatchSelectWidth={false}
-              value={newRow.status || 'pending'}
-              onChange={(v)=> setNewRow((s)=> ({ ...s, status: String(v) }))}
-              style={{ width: 148 }}
-              options={STATUS_OPTIONS as any}
-            />
           </td>
         );
       case 'actions':
@@ -782,30 +852,6 @@ export default function ContainersPage() {
       case 'roba': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="roba" align="left" truncate onSave={(v)=>patchContainer(r.id,{ roba: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'contain_price': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="contain_price" type="number" isCurrency align="right" onSave={(v)=>patchContainer(r.id,{ contain_price: Number(v||0)}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'agent': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="agent" align="left" truncate onSave={(v)=>patchContainer(r.id,{ agent: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
-      case 'status': {
-        const statusKey = String(r.status || 'pending').toLowerCase();
-        const statusLabel = STATUS_LABELS[statusKey] || (r.status || 'Bez statusa');
-        return (
-          <td key={`c-${k}-${r.id}`} className="status-cell">
-            <div className="status-cell-inner">
-              <span className={`status-badge status-${statusKey}`}>{statusLabel}</span>
-              <Select
-                size="small"
-                className="status-select"
-                dropdownMatchSelectWidth={false}
-                value={statusKey}
-                onChange={async (v)=> {
-                  const next = String(v);
-                  setRows(prev => prev.map(x => x.id===r.id ? { ...x, status: next } : x));
-                  try { await updateContainerWithFallbacks(r.id, { status: next }); await qc.invalidateQueries({ queryKey: ['containers'] }); } catch (e) { /* rollback simplistic */ }
-                }}
-                style={{ width: 148 }}
-                options={STATUS_OPTIONS as any}
-              />
-            </div>
-          </td>
-        );
-      }
       case 'total': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="total" type="number" isCurrency align="right" onSave={async (v)=>{ let T = parseMoney(v); if (!Number.isFinite(T) || T < 0) { alert('Total ne može biti negativan. Postavljeno na 0.'); T = 0; } const D = parseMoney(r.deposit); const nextBalance = +(T - D).toFixed(2); setRows(prev => prev.map(x => x.id===r.id ? { ...x, total: T, balance: nextBalance } : x)); await patchContainer(r.id,{ total: T}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
       case 'deposit': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="deposit" type="number" isCurrency align="right" onSave={async (v)=>{ let D = parseMoney(v); if (!Number.isFinite(D) || D < 0) { alert('Depozit ne može biti negativan. Postavljeno na 0.'); D = 0; } const T = parseMoney(r.total); const nextBalance = +(T - D).toFixed(2); setRows(prev => prev.map(x => x.id===r.id ? { ...x, deposit: D, balance: nextBalance } : x)); await patchContainer(r.id,{ deposit: D}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
       case 'balance': return (
@@ -827,19 +873,54 @@ export default function ContainersPage() {
       );
       case 'paid': {
         const isPaid = !!r.paid;
+        const statusRaw = typeof r.status === 'string' ? r.status : '';
+        const statusKey = (statusRaw || 'pending').trim().toLowerCase();
+        const normalizedStatus = STATUS_LABELS[statusKey] ? statusKey : (statusKey || 'pending');
+        const statusClass = normalizedStatus.replace(/[^a-z0-9_-]+/g, '-');
+        const statusLabel = STATUS_LABELS[normalizedStatus] || statusRaw || 'Bez statusa';
         return (
           <td key={`c-${k}-${r.id}`} className="payment-cell">
             <div className="payment-cell-inner">
-              <span className={`payment-label ${isPaid ? 'payment-label--paid' : 'payment-label--unpaid'}`}>
-                {isPaid ? 'Plaćeno' : 'Nije plaćeno'}
-              </span>
-              <Switch
-                size="small"
-                className="table-switch"
-                checked={isPaid}
-                loading={!!toggling[r.id]}
-                onChange={() => togglePaid(r)}
-              />
+              <div className="payment-group">
+                <span className="payment-meta-title">Status</span>
+                <div className="payment-row">
+                  <span className={`status-badge status-${statusClass}`}>{statusLabel}</span>
+                  <Select
+                    size="small"
+                    className="status-select"
+                    dropdownMatchSelectWidth={false}
+                    value={normalizedStatus}
+                    onChange={async (value) => {
+                      const next = String(value);
+                      setRows(prev => prev.map(x => x.id === r.id ? { ...x, status: next } : x));
+                      try {
+                        await updateContainerWithFallbacks(r.id, { status: next });
+                        await qc.invalidateQueries({ queryKey: ['containers'] });
+                      } catch (err) {
+                        console.error(err);
+                        setRows(prev => prev.map(x => x.id === r.id ? { ...x, status: normalizedStatus } : x));
+                      }
+                    }}
+                    style={{ minWidth: 140 }}
+                    options={STATUS_OPTIONS as any}
+                  />
+                </div>
+              </div>
+              <div className="payment-group">
+                <span className="payment-meta-title">Plaćanje</span>
+                <div className="payment-row">
+                  <span className={`payment-label ${isPaid ? 'payment-label--paid' : 'payment-label--unpaid'}`}>
+                    {isPaid ? 'Plaćeno' : 'Nije plaćeno'}
+                  </span>
+                  <Switch
+                    size="small"
+                    className="table-switch"
+                    checked={isPaid}
+                    loading={!!toggling[r.id]}
+                    onChange={() => togglePaid(r)}
+                  />
+                </div>
+              </div>
             </div>
           </td>
         );
@@ -952,6 +1033,7 @@ export default function ContainersPage() {
     deposit: 0,
     balance: 0,
     agent: "",
+    status: 'pending',
     paid: false,
   });
 
@@ -983,14 +1065,13 @@ export default function ContainersPage() {
       case 'total': return 'total';
       case 'balance': return 'balance';
       case 'paid': return 'status';
-      case 'status': return 'status';
       default: return 'created_at';
     }
   })();
   const { data: serverData, isLoading: isServerLoading } = useQuery({
-    queryKey: ['containers', { q: debouncedSearch, status: serverStatus, statusText: filterStatus, dateField: filterDateField, from: filterFrom, to: filterTo, sortBy: serverSortBy, sortDir }],
+    queryKey: ['containers', { q: debouncedSearch, status: serverStatus, dateField: filterDateField, from: filterFrom, to: filterTo, sortBy: serverSortBy, sortDir }],
     queryFn: async () => {
-      return await api.fetchContainers({ q: debouncedSearch, status: serverStatus as any, statusText: filterStatus || undefined, dateField: filterDateField, from: filterFrom, to: filterTo, sortBy: serverSortBy, sortDir });
+      return await api.fetchContainers({ q: debouncedSearch, status: serverStatus as any, dateField: filterDateField, from: filterFrom, to: filterTo, sortBy: serverSortBy, sortDir });
     },
     refetchOnWindowFocus: false,
     staleTime: 180_000,
@@ -1055,12 +1136,7 @@ export default function ContainersPage() {
       });
     }
 
-    // 5) status filter
-    if (filterStatus) {
-      list = list.filter(r => String((r as any).status || '') === filterStatus);
-    }
-
-    // 6) sorting
+    // 5) sorting
     const toNum = (x: any) => Number(x ?? 0);
     const toStr = (x: any) => String(x ?? "").toLowerCase();
     const cmp = (a: Container, b: Container) => {
@@ -1082,7 +1158,6 @@ export default function ContainersPage() {
         case "deposit": aa = parseMoney(a.deposit); bb = parseMoney(b.deposit); break;
         case "balance": aa = parseMoney(a.balance); bb = parseMoney(b.balance); break;
         case "paid": aa = a.paid ? 1 : 0; bb = b.paid ? 1 : 0; break;
-        case "status": aa = toStr((a as any).status); bb = toStr((b as any).status); break;
         default: aa = 0; bb = 0;
       }
       if (aa < bb) return sortDir === "asc" ? -1 : 1;
@@ -1106,22 +1181,67 @@ export default function ContainersPage() {
   const pagedRows = React.useMemo(() => filteredRows.slice(firstIdx, lastIdx), [filteredRows, firstIdx, lastIdx]);
 
   useEffect(() => {
-    const node = scrollRef.current;
-    if (!node) return;
+    const body = scrollRef.current;
+    const rail = bottomScrollRef.current;
+    if (!body || !rail) return;
+
     const updateShadows = () => {
-      const { scrollLeft, scrollWidth, clientWidth } = node;
-      node.classList.toggle('has-left', scrollLeft > 1);
-      node.classList.toggle('has-right', scrollLeft + clientWidth < scrollWidth - 1);
+      const { scrollLeft, scrollWidth, clientWidth } = body;
+      const hasLeft = scrollLeft > 1;
+      const hasRight = scrollLeft + clientWidth < scrollWidth - 1;
+      body.classList.toggle('has-left', hasLeft);
+      body.classList.toggle('has-right', hasRight);
+      rail.classList.toggle('has-left', hasLeft);
+      rail.classList.toggle('has-right', hasRight);
     };
-    updateShadows();
-    node.addEventListener('scroll', updateShadows, { passive: true });
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateShadows) : null;
-    if (ro) ro.observe(node);
+
+    const updateMetrics = () => {
+      const width = Math.max(body.scrollWidth, body.clientWidth);
+      setBottomScrollWidth(width);
+      rail.scrollLeft = body.scrollLeft;
+      updateShadows();
+    };
+
+    const handleBodyScroll = () => {
+      if (scrollSyncLock.current) return;
+      scrollSyncLock.current = true;
+      rail.scrollLeft = body.scrollLeft;
+      scrollSyncLock.current = false;
+      updateShadows();
+    };
+
+    const handleRailScroll = () => {
+      if (scrollSyncLock.current) return;
+      scrollSyncLock.current = true;
+      body.scrollLeft = rail.scrollLeft;
+      scrollSyncLock.current = false;
+    };
+
+    body.addEventListener('scroll', handleBodyScroll, { passive: true });
+    rail.addEventListener('scroll', handleRailScroll, { passive: true });
+
+    const ro = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(updateMetrics)
+      : null;
+    if (ro) {
+      ro.observe(body);
+      if (tableRef.current) ro.observe(tableRef.current);
+    } else {
+      window.addEventListener('resize', updateMetrics);
+    }
+
+    updateMetrics();
+
     return () => {
-      node.removeEventListener('scroll', updateShadows);
-      ro?.disconnect();
+      body.removeEventListener('scroll', handleBodyScroll);
+      rail.removeEventListener('scroll', handleRailScroll);
+      if (ro) {
+        ro.disconnect();
+      } else {
+        window.removeEventListener('resize', updateMetrics);
+      }
     };
-  }, [pagedRows.length, colOrder, visibleCols, page, pageSize]);
+  }, [pagedRows.length, colOrder, visibleCols, page, pageSize, showNewRow]);
   useEffect(()=>{ try { localStorage.setItem(LS_PAGE, String(page)); } catch {} }, [page]);
   useEffect(()=>{ try { localStorage.setItem('containers.table.sumScope.v1', sumScope); } catch {} }, [sumScope]);
 
@@ -2042,17 +2162,6 @@ export default function ContainersPage() {
                 ]}
               />
 
-              <span aria-hidden title="Status">🏷️</span>
-              <span style={{ fontSize: 12, opacity: 0.8 }}>Status</span>
-              <Select
-                style={{ width: 160 }}
-                value={filterStatus || undefined}
-                onChange={(v) => setFilterStatus(v || "")}
-                allowClear
-                placeholder="Svi"
-                options={[{ label: "Svi", value: "" }].concat(Array.from(new Set(rows.map(r => String((r as any).status || '')).filter(Boolean))).sort().map(s => ({ label: s, value: s })))}
-              />
-
               <span aria-hidden title="Datum">📅</span>
               <span style={{ fontSize: 12, opacity: 0.8 }}>Datum</span>
               <Select
@@ -2085,7 +2194,7 @@ export default function ContainersPage() {
                   setSortBy("eta");
                   setSortDir("asc");
                   setSearchText("");
-                }}
+              }}
               >
                 Reset
               </Button>
@@ -2105,7 +2214,7 @@ export default function ContainersPage() {
         )}
       </Card>
 
-      <Card className="table-wrap fullbleed" styles={{ body: { overflowX: "auto", paddingTop: 12 } }}>
+      <Card className="table-wrap fullbleed" styles={{ body: { overflow: "visible", paddingTop: 12, paddingBottom: 16 } }}>
         {loading ? (
           <p style={{ padding: 12 }}>Učitavanje…</p>
         ) : (
@@ -2134,8 +2243,9 @@ export default function ContainersPage() {
 
           <div className="table-scroll" ref={scrollRef}>
           <table
+            ref={tableRef}
             className="table responsive"
-            style={{ tableLayout: "fixed", width: "100%" }}
+            style={{ tableLayout: "auto", width: "100%" }}
           >
             <colgroup>
               {/* Selection */}
@@ -2230,7 +2340,7 @@ export default function ContainersPage() {
                 {colOrder.filter(isColVisible).map((k) => {
                   const align = (k==='cargo_qty' || k==='contain_price' || k==='total' || k==='deposit' || k==='balance')
                     ? 'right'
-                    : (k==='proforma_no' || k==='etd' || k==='delivery' || k==='eta' || k==='paid' || k==='status')
+                    : (k==='proforma_no' || k==='etd' || k==='delivery' || k==='eta' || k==='paid')
                       ? 'center'
                       : 'left';
                   const classes = [
@@ -2254,6 +2364,12 @@ export default function ContainersPage() {
               </tr>
             </tfoot>
           </table>
+          </div>
+          <div className="table-scroll-rail" ref={bottomScrollRef}>
+            <div
+              className="table-scroll-rail__inner"
+              style={{ width: bottomScrollWidth ? `${bottomScrollWidth}px` : '100%' }}
+            />
           </div>
           <div className="scroll-hint">Povuci za još kolona →</div>
 
