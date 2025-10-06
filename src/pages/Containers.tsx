@@ -242,20 +242,28 @@ const parseMoney = (v: any): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const moneyFormatterIntl = new Intl.NumberFormat('en-US', {
+const moneyFormatterIntl = new Intl.NumberFormat('de-DE', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
+  useGrouping: true,
 });
 
 const fmtCurrency = (v?: number | string | null): string => moneyFormatterIntl.format(parseMoney(v));
 const fmtNumber = (v?: number | string | null, fractionDigits = 0): string =>
-  new Intl.NumberFormat('en-US', {
+  new Intl.NumberFormat('de-DE', {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
+    useGrouping: true,
   }).format(parseMoney(v));
 const fmtMoneyForExport = (v?: number | string | null, fractionDigits = 2): string => {
   if (v === null || v === undefined || v === '') return '';
-  return parseMoney(v).toFixed(fractionDigits);
+  const num = parseMoney(v);
+  if (!Number.isFinite(num)) return '';
+  return new Intl.NumberFormat('de-DE', {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+    useGrouping: true,
+  }).format(num);
 };
 
 const formatInputMoney = (value?: string | number | null) => {
@@ -268,7 +276,7 @@ const formatInputNumber = (value?: string | number | null, fractionDigits = 0) =
   if (value === null || value === undefined || value === '') return '';
   const num = parseMoney(value);
   if (!Number.isFinite(num)) return '';
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('de-DE', {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
     useGrouping: true,
@@ -938,8 +946,8 @@ export default function ContainersPage() {
       case 'roba': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="roba" align="left" truncate onSave={(v)=>patchContainer(r.id,{ roba: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'contain_price': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="contain_price" type="number" isCurrency align="right" onSave={(v)=>patchContainer(r.id,{ contain_price: Number(parseMoney(v||0).toFixed(2))}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'agent': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="agent" align="left" truncate onSave={(v)=>patchContainer(r.id,{ agent: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
-      case 'total': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="total" type="number" isCurrency align="right" onSave={async (v)=>{ let T = parseMoney(v); if (!Number.isFinite(T) || T < 0) { alert('Total ne može biti negativan. Postavljeno na 0.'); T = 0; } const D = parseMoney(r.deposit); const nextBalance = +(T - D).toFixed(2); setRows(prev => prev.map(x => x.id===r.id ? { ...x, total: T, balance: nextBalance } : x)); await patchContainer(r.id,{ total: T}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
-      case 'deposit': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="deposit" type="number" isCurrency align="right" onSave={async (v)=>{ let D = parseMoney(v); if (!Number.isFinite(D) || D < 0) { alert('Depozit ne može biti negativan. Postavljeno na 0.'); D = 0; } const T = parseMoney(r.total); const nextBalance = +(T - D).toFixed(2); setRows(prev => prev.map(x => x.id===r.id ? { ...x, deposit: D, balance: nextBalance } : x)); await patchContainer(r.id,{ deposit: D}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
+      case 'total': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="total" type="number" isCurrency align="right" onSave={async (v)=>{ let T = parseMoney(v); if (!Number.isFinite(T) || T < 0) { alert('Total ne može biti negativan. Postavljeno na 0.'); T = 0; } T = Number(T.toFixed(2)); const D = parseMoney(r.deposit); const nextBalance = Number((T - D).toFixed(2)); setRows(prev => prev.map(x => x.id===r.id ? { ...x, total: T, balance: nextBalance } : x)); await patchContainer(r.id,{ total: T}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
+      case 'deposit': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="deposit" type="number" isCurrency align="right" onSave={async (v)=>{ let D = parseMoney(v); if (!Number.isFinite(D) || D < 0) { alert('Depozit ne može biti negativan. Postavljeno na 0.'); D = 0; } D = Number(D.toFixed(2)); const T = parseMoney(r.total); const nextBalance = Number((T - D).toFixed(2)); setRows(prev => prev.map(x => x.id===r.id ? { ...x, deposit: D, balance: nextBalance } : x)); await patchContainer(r.id,{ deposit: D}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
       case 'balance': return (
         <EditableCell
           key={`c-${k}-${r.id}`}
@@ -951,6 +959,7 @@ export default function ContainersPage() {
           onSave={async (v)=>{
             let B = parseMoney(v);
             if (!Number.isFinite(B) || B < 0) B = 0;
+            B = Number(B.toFixed(2));
             setRows(prev => prev.map(x => x.id===r.id ? { ...x, balance: B } : x));
             await patchContainer(r.id, { balance: B });
             await qc.invalidateQueries({ queryKey: ['containers'] });
@@ -1563,6 +1572,7 @@ export default function ContainersPage() {
     // Split and ignore empty lines
     const linesRaw = text.split(/\r?\n/).filter(l => l.trim().length > 0);
     if (linesRaw.length === 0) return;
+    const rowErrors: string[] = [];
 
     // Find header row within the first 10 non-empty lines
     let headerRow = 0;
@@ -1627,8 +1637,28 @@ export default function ContainersPage() {
       const pick = (i: number) => (i >= 0 && i < cols.length ? cols[i] : "");
       const toNum = (v: any, fallback = 0) => {
         if (v === null || v === undefined || v === "") return fallback;
-        const n = parseMoney(v);
-        return Number.isFinite(n) ? n : fallback;
+        if (typeof v === 'number') return Number.isFinite(v) ? v : fallback;
+        const raw = String(v).trim();
+        if (!raw) return fallback;
+        const cleaned = raw.replace(/[^0-9,.-\s]/g, '');
+        const compact = cleaned.replace(/\s/g, '');
+        const minusCount = (compact.match(/-/g) || []).length;
+        if (minusCount > 1 || (minusCount === 1 && !compact.startsWith('-'))) {
+          throw new Error(`Neispravan format broja "${raw}"`);
+        }
+        const numericPatterns = [
+          /^-?\d{1,3}(\.\d{3})*(,\d+)?$/,
+          /^-?\d{1,3}(,\d{3})*(\.\d+)?$/,
+          /^-?\d+(?:[.,]\d+)?$/,
+        ];
+        if (!numericPatterns.some((re) => re.test(compact))) {
+          throw new Error(`Neispravan format broja "${raw}"`);
+        }
+        const parsed = parseMoney(raw);
+        if (!Number.isFinite(parsed)) {
+          throw new Error(`Ne mogu protumačiti broj "${raw}"`);
+        }
+        return parsed;
       };
       const truthy = (v: any) => isTruthy(v);
 
@@ -1784,8 +1814,13 @@ export default function ContainersPage() {
           });
         }
       } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        rowErrors.push(`Red ${li + 1}: ${msg}`);
         console.error("Ne mogu kreirati iz CSV/Excel reda", li + 1, e, payload);
       }
+    }
+    if (rowErrors.length > 0) {
+      alert(`Import završen uz greške:\n${rowErrors.join('\n')}`);
     }
   }
 
