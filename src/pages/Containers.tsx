@@ -219,9 +219,12 @@ const parseMoney = (v: any): number => {
   if (v === null || v === undefined || v === '') return 0;
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
   let s = String(v).trim();
-  // Strip currency and non-numeric except separators and minus
+  if (!s) return 0;
+  // Strip currency symbols and keep only digits, separators, sign
   s = s.replace(/[^0-9,.-\s]/g, '');
-  if (s.includes('.') && s.includes(',')) {
+  const hasComma = s.includes(',');
+  const hasDot = s.includes('.');
+  if (hasComma && hasDot) {
     // Decide decimal by the right-most separator
     if (s.lastIndexOf('.') > s.lastIndexOf(',')) {
       // US style: comma thousands, dot decimal
@@ -230,22 +233,57 @@ const parseMoney = (v: any): number => {
       // EU style: dot thousands, comma decimal
       s = s.replace(/\./g, '').replace(/,/g, '.');
     }
-  } else if (s.includes(',') && !s.includes('.')) {
-    // Only comma present → treat as decimal
+  } else if (hasComma && !hasDot) {
+    // Only comma present → decimal separator
     s = s.replace(/,/g, '.');
-  } else {
-    // Only dot or plain digits → keep
   }
   s = s.replace(/\s/g, '');
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 };
 
-const fmtCurrency = (v?: number | string | null): string =>
-  new Intl.NumberFormat('de-DE', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+const moneyFormatterIntl = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const fmtCurrency = (v?: number | string | null): string => moneyFormatterIntl.format(parseMoney(v));
+const fmtNumber = (v?: number | string | null, fractionDigits = 0): string =>
+  new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   }).format(parseMoney(v));
+const fmtMoneyForExport = (v?: number | string | null, fractionDigits = 2): string => {
+  if (v === null || v === undefined || v === '') return '';
+  return parseMoney(v).toFixed(fractionDigits);
+};
+
+const formatInputMoney = (value?: string | number | null) => {
+  if (value === null || value === undefined || value === '') return '';
+  const num = parseMoney(value);
+  if (!Number.isFinite(num)) return '';
+  return moneyFormatterIntl.format(num);
+};
+const formatInputNumber = (value?: string | number | null, fractionDigits = 0) => {
+  if (value === null || value === undefined || value === '') return '';
+  const num = parseMoney(value);
+  if (!Number.isFinite(num)) return '';
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+    useGrouping: true,
+  }).format(num);
+};
+const parseInputNumber = (value?: string | null, fractionDigits?: number) => {
+  if (value === null || value === undefined || value === '') return undefined;
+  const num = parseMoney(value);
+  if (!Number.isFinite(num)) return undefined;
+  if (typeof fractionDigits === 'number') {
+    return Number(num.toFixed(fractionDigits));
+  }
+  return num;
+};
+
 const sumBy = (rows: Container[], key: keyof Container) =>
   rows.reduce((acc, r) => acc + parseMoney(r[key] as any), 0);
 
@@ -328,9 +366,10 @@ function EditableCell({
   async function commit() {
     let v: any = value;
     if (type === "number") {
-      v = Number(v || 0);
-      if (typeof min === "number" && v < min) v = min;
-      if (typeof max === "number" && v > max) v = max;
+      let num = parseMoney(v);
+      if (typeof min === "number" && num < min) num = min;
+      if (typeof max === "number" && num > max) num = max;
+      v = num;
     }
     if (type === "date") {
       // allow manual EU input in text form, but input type=date gives ISO
@@ -361,6 +400,12 @@ function EditableCell({
       display = display === "" || display === null || (typeof display === 'string' && !display.trim())
         ? ""
         : fmtCurrency(display);
+    } else if (type === "number") {
+      const num = parseMoney(display);
+      if (display !== "" && display !== null && Number.isFinite(num)) {
+        const needsFraction = !Number.isInteger(num);
+        display = fmtNumber(num, needsFraction ? 2 : 0);
+      }
     }
     if (typeof display === "number" && Number.isNaN(display)) display = "";
     const hasValue = display !== "" && display !== null && display !== undefined;
@@ -400,6 +445,8 @@ function EditableCell({
   }
 
   // edit mode
+  const numericValue = typeof value === 'number' ? value : parseMoney(value);
+
   return (
     <td style={baseStyle} className={tdClassName} data-label={dataLabel}>
       {type === 'select' && options ? (
@@ -424,11 +471,20 @@ function EditableCell({
         <InputNumber
           ref={inputRef}
           size="small"
-          value={Number(value ?? 0)}
+          value={numericValue}
           min={min}
           max={max}
           step={isCurrency ? 0.01 : 1}
-          onChange={(v) => setValue(Number(v ?? 0))}
+          formatter={(val) =>
+            isCurrency
+              ? formatInputMoney(val)
+              : formatInputNumber(val, Number.isInteger(numericValue) ? 0 : 2)
+          }
+          parser={(val) => parseInputNumber(val, isCurrency ? 2 : undefined) ?? 0}
+          onChange={(v) => {
+            const numeric = typeof v === 'number' ? v : parseMoney(v);
+            setValue(numeric);
+          }}
           onBlur={commit}
           onPressEnter={commit as any}
           style={{ width: '100%' }}
@@ -701,9 +757,11 @@ export default function ContainersPage() {
               size="small"
               min={1}
               max={100000}
-              value={newRow.cargo_qty ?? 1}
+              value={typeof newRow.cargo_qty === 'number' ? newRow.cargo_qty : parseMoney(newRow.cargo_qty)}
+              formatter={(val) => formatInputNumber(val, 0)}
+              parser={(val) => parseInputNumber(val, 0) ?? 0}
               onChange={(v) => {
-                let n = Number(v ?? 1);
+                let n = typeof v === 'number' ? v : parseMoney(v);
                 if (!Number.isFinite(n) || n < 1) n = 1;
                 if (n > 100000) n = 100000;
                 setNewRow((s) => ({ ...s, cargo_qty: n }));
@@ -736,8 +794,13 @@ export default function ContainersPage() {
             <InputNumber
               size="small"
               step={0.01}
-              value={newRow.contain_price ?? 0}
-              onChange={(v) => setNewRow((s) => ({ ...s, contain_price: Number(v ?? 0) }))}
+              value={typeof newRow.contain_price === 'number' ? newRow.contain_price : parseMoney(newRow.contain_price)}
+              formatter={formatInputMoney}
+              parser={(val) => parseInputNumber(val, 2) ?? 0}
+              onChange={(v) => {
+                const num = typeof v === 'number' ? Number(v) : parseMoney(v);
+                setNewRow((s) => ({ ...s, contain_price: Number(num.toFixed(2)) }));
+              }}
               style={{ width: 120 }}
             />
           </td>
@@ -754,8 +817,17 @@ export default function ContainersPage() {
             <InputNumber
               size="small"
               step={0.01}
-              value={newRow.total ?? 0}
-              onChange={(v) => setNewRow((s) => ({ ...s, total: Number(v ?? 0) }))}
+              value={typeof newRow.total === 'number' ? newRow.total : parseMoney(newRow.total)}
+              formatter={formatInputMoney}
+              parser={(val) => parseInputNumber(val, 2) ?? 0}
+              onChange={(v) => {
+                const num = typeof v === 'number' ? Number(v) : parseMoney(v);
+                setNewRow((s) => {
+                  const depositVal = parseMoney(s.deposit);
+                  const balanceVal = Number((num - depositVal).toFixed(2));
+                  return { ...s, total: Number(num.toFixed(2)), balance: balanceVal };
+                });
+              }}
               style={{ width: 120 }}
             />
           </td>
@@ -766,8 +838,17 @@ export default function ContainersPage() {
             <InputNumber
               size="small"
               step={0.01}
-              value={newRow.deposit ?? 0}
-              onChange={(v) => setNewRow((s) => ({ ...s, deposit: Number(v ?? 0) }))}
+              value={typeof newRow.deposit === 'number' ? newRow.deposit : parseMoney(newRow.deposit)}
+              formatter={formatInputMoney}
+              parser={(val) => parseInputNumber(val, 2) ?? 0}
+              onChange={(v) => {
+                const num = typeof v === 'number' ? Number(v) : parseMoney(v);
+                setNewRow((s) => {
+                  const totalVal = parseMoney(s.total);
+                  const balanceVal = Number((totalVal - num).toFixed(2));
+                  return { ...s, deposit: Number(num.toFixed(2)), balance: balanceVal };
+                });
+              }}
               style={{ width: 120 }}
             />
           </td>
@@ -778,8 +859,13 @@ export default function ContainersPage() {
             <InputNumber
               size="small"
               step={0.01}
-              value={newRow.balance ?? (Number(newRow.total ?? 0) - Number(newRow.deposit ?? 0))}
-              onChange={(v) => setNewRow((s) => ({ ...s, balance: Number(v ?? 0) }))}
+              value={typeof newRow.balance === 'number' ? newRow.balance : parseMoney(newRow.balance ?? (parseMoney(newRow.total) - parseMoney(newRow.deposit)))}
+              formatter={formatInputMoney}
+              parser={(val) => parseInputNumber(val, 2) ?? 0}
+              onChange={(v) => {
+                const num = typeof v === 'number' ? Number(v) : parseMoney(v);
+                setNewRow((s) => ({ ...s, balance: Number(num.toFixed(2)) }));
+              }}
               style={{ width: 120 }}
             />
           </td>
@@ -846,11 +932,11 @@ export default function ContainersPage() {
       case 'etd': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="etd" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ etd: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'delivery': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="delivery" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ delivery: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'eta': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="eta" type="date" align="center" onSave={(v)=>patchContainer(r.id,{ eta: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
-      case 'cargo_qty': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="cargo_qty" type="number" align="right" onSave={(v)=>patchContainer(r.id,{ cargo_qty: Number(v||0)}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'cargo_qty': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="cargo_qty" type="number" align="right" onSave={(v)=>patchContainer(r.id,{ cargo_qty: Math.round(parseMoney(v||0))}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'cargo': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="cargo" align="left" truncate onSave={(v)=>patchContainer(r.id,{ cargo: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'container_no': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="container_no" align="left" truncate onSave={(v)=>patchContainer(r.id,{ container_no: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'roba': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="roba" align="left" truncate onSave={(v)=>patchContainer(r.id,{ roba: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
-      case 'contain_price': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="contain_price" type="number" isCurrency align="right" onSave={(v)=>patchContainer(r.id,{ contain_price: Number(v||0)}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
+      case 'contain_price': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="contain_price" type="number" isCurrency align="right" onSave={(v)=>patchContainer(r.id,{ contain_price: Number(parseMoney(v||0).toFixed(2))}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'agent': return <EditableCell key={`c-${k}-${r.id}`} row={r} field="agent" align="left" truncate onSave={(v)=>patchContainer(r.id,{ agent: String(v||"")}).then(()=> qc.invalidateQueries({ queryKey: ['containers'] }))} />;
       case 'total': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="total" type="number" isCurrency align="right" onSave={async (v)=>{ let T = parseMoney(v); if (!Number.isFinite(T) || T < 0) { alert('Total ne može biti negativan. Postavljeno na 0.'); T = 0; } const D = parseMoney(r.deposit); const nextBalance = +(T - D).toFixed(2); setRows(prev => prev.map(x => x.id===r.id ? { ...x, total: T, balance: nextBalance } : x)); await patchContainer(r.id,{ total: T}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
       case 'deposit': return (<EditableCell key={`c-${k}-${r.id}`} row={r} field="deposit" type="number" isCurrency align="right" onSave={async (v)=>{ let D = parseMoney(v); if (!Number.isFinite(D) || D < 0) { alert('Depozit ne može biti negativan. Postavljeno na 0.'); D = 0; } const T = parseMoney(r.total); const nextBalance = +(T - D).toFixed(2); setRows(prev => prev.map(x => x.id===r.id ? { ...x, deposit: D, balance: nextBalance } : x)); await patchContainer(r.id,{ deposit: D}); await qc.invalidateQueries({ queryKey: ['containers'] }); }} />);
@@ -1137,7 +1223,7 @@ export default function ContainersPage() {
     }
 
     // 5) sorting
-    const toNum = (x: any) => Number(x ?? 0);
+    const toNum = (x: any) => parseMoney(x ?? 0);
     const toStr = (x: any) => String(x ?? "").toLowerCase();
     const cmp = (a: Container, b: Container) => {
       let aa: any, bb: any;
@@ -1541,23 +1627,7 @@ export default function ContainersPage() {
       const pick = (i: number) => (i >= 0 && i < cols.length ? cols[i] : "");
       const toNum = (v: any, fallback = 0) => {
         if (v === null || v === undefined || v === "") return fallback;
-        if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
-        // Remove currency symbols and any non-numeric except separators
-        const s0 = String(v).trim().replace(/[^0-9,.-\s]/g, "");
-        // If both separators exist, assume EU style ('.' thousands, ',' decimal)
-        if (s0.includes(".") && s0.includes(",")) {
-          const s = s0.replace(/\./g, "").replace(/,/g, ".");
-          const n = Number(s);
-          return Number.isFinite(n) ? n : fallback;
-        }
-        // If only comma exists, treat comma as decimal separator
-        if (s0.includes(",") && !s0.includes(".")) {
-          const s = s0.replace(/\s/g, "").replace(/,/g, ".");
-          const n = Number(s);
-          return Number.isFinite(n) ? n : fallback;
-        }
-        // Default: plain Number after removing thin spaces
-        const n = Number(s0.replace(/\s/g, ""));
+        const n = parseMoney(v);
         return Number.isFinite(n) ? n : fallback;
       };
       const truthy = (v: any) => isTruthy(v);
@@ -1599,7 +1669,7 @@ export default function ContainersPage() {
 
       // Handle Cijena (EUR): blank -> '0,00', otherwise keep original text
       const rawCijena = pick(idx.contain_price);
-      const containPriceValue = toNum(rawCijena, 0);
+      const containPriceValue = Number(toNum(rawCijena, 0).toFixed(2));
 
       const payload: any = {
         supplier: pick(idx.supplier),
@@ -1608,9 +1678,9 @@ export default function ContainersPage() {
         etd: normDate(pick(idx.etd)),
         delivery: normDate(pick(idx.delivery)),
         eta: normDate(pick(idx.eta)),
-        cargo_qty: qtyParsed,
-        qty: qtyParsed,
-        quantity: qtyParsed,
+        cargo_qty: Number(qtyParsed.toFixed(2)),
+        qty: Number(qtyParsed.toFixed(2)),
+        quantity: Number(qtyParsed.toFixed(2)),
         cargo: pick(idx.cargo) || cargoTypeFromQty,
         type: pick(idx.cargo) || cargoTypeFromQty, // some backends expect 'type' instead of 'cargo'
         container_no: container_no_detected,
@@ -1620,13 +1690,13 @@ export default function ContainersPage() {
         containerno: container_no_detected,
         containerNum: container_no_detected,
         roba: pick(idx.roba),
-        contain_price: containPriceValue || null,
-        container_price: containPriceValue || null,
-        price: containPriceValue || null, // extra alias
+        contain_price: Number.isFinite(containPriceValue) ? containPriceValue : null,
+        container_price: Number.isFinite(containPriceValue) ? containPriceValue : null,
+        price: Number.isFinite(containPriceValue) ? containPriceValue : null, // extra alias
         agent: pick(idx.agent),
-        total: toNum(pick(idx.total)),
-        deposit: toNum(pick(idx.deposit)),
-        balance: toNum(pick(idx.balance)),
+        total: Number(toNum(pick(idx.total)).toFixed(2)),
+        deposit: Number(toNum(pick(idx.deposit)).toFixed(2)),
+        balance: Number(toNum(pick(idx.balance)).toFixed(2)),
         paid: truthy(pick(idx.paid)),
         payment_status: truthy(pick(idx.paid)) ? "paid" : "unpaid", // alias for strict backends
         // If header missing, try to detect "plaćeno/placeno/paid" anywhere in the row
@@ -1790,11 +1860,11 @@ export default function ContainersPage() {
   async function togglePaid(row: Container) {
     if (!token) return alert("Niste prijavljeni.");
     const prevPaid = !!row.paid;
-    const prevBalance = Number(row.balance ?? 0);
+    const prevBalance = Number(parseMoney(row.balance).toFixed(2));
 
     const nextPaid = !prevPaid;
     // When marking as paid, balance goes to 0; when unmarking, balance = total - deposit
-    const recomputedBalance = Number(row.total ?? 0) - Number(row.deposit ?? 0);
+    const recomputedBalance = Number((parseMoney(row.total) - parseMoney(row.deposit)).toFixed(2));
     const nextBalance = nextPaid ? 0 : recomputedBalance;
 
     setToggling((m) => ({ ...m, [row.id]: true }));
@@ -1836,7 +1906,7 @@ export default function ContainersPage() {
     try {
       // Prepare robust payload with multiple alias field names so various backends accept it
       const proforma = String(newRow.proforma_no ?? "").trim();
-      const qty = Number(newRow.cargo_qty ?? 0);
+      const qty = Number(parseMoney(newRow.cargo_qty ?? 0).toFixed(2));
       const containerNo = String(newRow.container_no ?? "").trim();
 
       const base: any = {
@@ -1844,10 +1914,10 @@ export default function ContainersPage() {
         ...newRow,
         // normalize obvious number fields
         cargo_qty: qty,
-        contain_price: Number(newRow.contain_price ?? 0),
-        total: Number(newRow.total ?? 0),
-        deposit: Number(newRow.deposit ?? 0),
-        balance: Number(newRow.balance ?? 0),
+        contain_price: Number(parseMoney(newRow.contain_price ?? 0).toFixed(2)),
+        total: Number(parseMoney(newRow.total ?? 0).toFixed(2)),
+        deposit: Number(parseMoney(newRow.deposit ?? 0).toFixed(2)),
+        balance: Number(parseMoney(newRow.balance ?? 0).toFixed(2)),
         paid: !!newRow.paid,
       };
 
@@ -1994,15 +2064,15 @@ export default function ContainersPage() {
       r.etd ?? "",
       r.delivery ?? "",
       r.eta ?? "",
-      r.cargo_qty ?? "",
+      fmtMoneyForExport(r.cargo_qty ?? "", 0),
       r.cargo ?? "",
       r.container_no ?? "",
       r.roba ?? "",
-      Number(r.contain_price ?? 0),
+      fmtMoneyForExport(r.contain_price ?? 0),
       r.agent ?? "",
-      Number(r.total ?? 0),
-      Number(r.deposit ?? 0),
-      Number(r.balance ?? 0),
+      fmtMoneyForExport(r.total ?? 0),
+      fmtMoneyForExport(r.deposit ?? 0),
+      fmtMoneyForExport(r.balance ?? 0),
       r.paid ? "plaćeno" : "nije plaćeno",
     ]);
     const csv =
@@ -2011,11 +2081,14 @@ export default function ContainersPage() {
       lines
         .map(row =>
           row
-            .map(v =>
-              typeof v === "string"
-                ? `"${v.replace(/"/g, '""')}"`
-                : String(v)
-            )
+            .map((v) => {
+              if (v === null || v === undefined) return '';
+              if (typeof v === 'number') return String(v);
+              const trimmed = String(v).trim();
+              if (trimmed === '') return '';
+              if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return trimmed; // already numeric
+              return `"${trimmed.replace(/"/g, '""')}"`;
+            })
             .join(",")
         )
         .join("\n");
@@ -2041,7 +2114,7 @@ export default function ContainersPage() {
           <td>${r.etd ?? ""}</td>
           <td>${r.delivery ?? ""}</td>
           <td>${r.eta ?? ""}</td>
-          <td style="text-align:center">${r.cargo_qty ?? ""}</td>
+          <td style="text-align:center">${r.cargo_qty !== null && r.cargo_qty !== undefined ? fmtNumber(r.cargo_qty, 0) : ''}</td>
           <td>${r.cargo ?? ""}</td>
           <td>${r.container_no ?? ""}</td>
           <td>${r.roba ?? ""}</td>
